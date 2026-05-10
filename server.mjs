@@ -1,7 +1,7 @@
 import http from 'node:http'
 import { createHash, createHmac } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createWriteStream, existsSync, readFileSync } from 'node:fs'
+import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -11,6 +11,7 @@ loadLocalEnv()
 
 const API_PORT = Number(process.env.API_PORT || 8787)
 const BODY_LIMIT = 28 * 1024 * 1024
+const MODEL_UPLOAD_LIMIT = 180 * 1024 * 1024
 const TRIPO_API_KEY = process.env.TRIPO_API_KEY
 const TRIPO_API_BASE = process.env.TRIPO_API_BASE || 'https://api.tripo3d.ai/v2/openapi'
 const TRIPO_MODEL_VERSION = process.env.TRIPO_MODEL_VERSION || 'v3.0-20250812'
@@ -95,6 +96,12 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/3d/model') {
       await proxyModel(url, response)
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/3d/local-model') {
+      const model = await importLocalModel(request, url)
+      sendJson(response, 200, model)
       return
     }
 
@@ -190,6 +197,29 @@ function readJsonBody(request) {
       } catch {
         reject(Object.assign(new Error('Invalid JSON payload.'), { status: 400 }))
       }
+    })
+
+    request.on('error', reject)
+  })
+}
+
+function readRawBody(request, limit = MODEL_UPLOAD_LIMIT) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+
+    request.on('data', (chunk) => {
+      size += chunk.length
+      if (size > limit) {
+        reject(Object.assign(new Error('Model payload is too large.'), { status: 413 }))
+        request.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+
+    request.on('end', () => {
+      resolve(Buffer.concat(chunks))
     })
 
     request.on('error', reject)
@@ -375,19 +405,42 @@ async function getTripoTask(taskId) {
     throw Object.assign(new Error('taskId is required.'), { status: 400 })
   }
 
+  if (await hasLocalModel(taskId, 'glb')) {
+    return {
+      provider: 'tripo',
+      taskId,
+      status: 'success',
+      progress: 100,
+      modelUrl: localModelUrl(taskId, 'glb'),
+      rawModelUrl: '',
+      error: '',
+      raw: { cached: true },
+    }
+  }
+
   const raw = await tripoRequest(`/task/${encodeURIComponent(taskId)}`, { method: 'GET' })
   const data = raw.data || raw
   const status = data.status || data.task_status || data.state || 'unknown'
   const rawModelUrl = findModelUrl(data)
+  let modelUrl = rawModelUrl ? `/api/3d/model?url=${encodeURIComponent(rawModelUrl)}` : ''
+  let cacheError = ''
+
+  if (rawModelUrl && isSuccessStatus(status)) {
+    try {
+      modelUrl = await cacheRemoteModel(taskId, rawModelUrl)
+    } catch (error) {
+      cacheError = error.message || 'Model cache failed.'
+    }
+  }
 
   return {
     provider: 'tripo',
     taskId,
     status,
     progress: data.progress ?? data.percent ?? null,
-    modelUrl: rawModelUrl ? `/api/3d/model?url=${encodeURIComponent(rawModelUrl)}` : '',
+    modelUrl,
     rawModelUrl,
-    error: data.error || data.message || '',
+    error: data.error || cacheError || '',
     raw,
   }
 }
@@ -421,8 +474,8 @@ async function createHunyuanTask(payload) {
   let modelUrl = rawModelUrl ? `/api/3d/model?url=${encodeURIComponent(rawModelUrl)}` : ''
 
   if (modelBase64) {
-    await saveLocalModel(taskId, modelBase64)
-    modelUrl = `/api/3d/local-model/${encodeURIComponent(taskId)}.glb`
+    await saveLocalModel(taskId, modelBase64, 'glb')
+    modelUrl = localModelUrl(taskId, 'glb')
   }
 
   return {
@@ -439,13 +492,13 @@ async function getHunyuanTask(taskId) {
     throw Object.assign(new Error('taskId is required.'), { status: 400 })
   }
 
-  if (await hasLocalModel(taskId)) {
+  if (await hasLocalModel(taskId, 'glb')) {
     return {
       provider: 'hunyuan',
       taskId,
       status: 'success',
       progress: 100,
-      modelUrl: `/api/3d/local-model/${encodeURIComponent(taskId)}.glb`,
+      modelUrl: localModelUrl(taskId, 'glb'),
       rawModelUrl: '',
       error: '',
       raw: {},
@@ -461,8 +514,8 @@ async function getHunyuanTask(taskId) {
   let modelUrl = rawModelUrl ? `/api/3d/model?url=${encodeURIComponent(rawModelUrl)}` : ''
 
   if (modelBase64) {
-    await saveLocalModel(taskId, modelBase64)
-    modelUrl = `/api/3d/local-model/${encodeURIComponent(taskId)}.glb`
+    await saveLocalModel(taskId, modelBase64, 'glb')
+    modelUrl = localModelUrl(taskId, 'glb')
   }
 
   return {
@@ -516,40 +569,138 @@ function normalizeHunyuanStatus(status) {
   return 'running'
 }
 
+function isSuccessStatus(status) {
+  return ['success', 'succeeded', 'completed', 'complete', 'done', 'finish', 'finished'].includes(String(status || '').toLowerCase())
+}
+
 function parseModelBase64(modelBase64) {
   const raw = String(modelBase64 || '').replace(/^data:.*?;base64,/, '')
   return Buffer.from(raw, 'base64')
 }
 
-async function saveLocalModel(taskId, modelBase64) {
-  const buffer = parseModelBase64(modelBase64)
-  if (buffer.length < 1024) throw new Error('Hunyuan3D returned an invalid GLB payload.')
+async function saveLocalModel(taskId, modelData, ext = 'glb') {
+  const buffer = Buffer.isBuffer(modelData) ? modelData : parseModelBase64(modelData)
+  validateModelBuffer(buffer, ext)
 
   await mkdir(LOCAL_MODEL_DIR, { recursive: true })
-  await writeFile(localModelPath(taskId), buffer)
+  await writeFile(localModelPath(taskId, ext), buffer)
 }
 
-async function hasLocalModel(taskId) {
+async function hasLocalModel(taskId, ext = 'glb') {
   try {
-    await access(localModelPath(taskId))
+    await access(localModelPath(taskId, ext))
     return true
   } catch {
     return false
   }
 }
 
-function localModelPath(taskId) {
-  return path.join(LOCAL_MODEL_DIR, `${sanitizeFileName(taskId)}.glb`)
+function localModelPath(taskId, ext = 'glb') {
+  return path.join(LOCAL_MODEL_DIR, `${sanitizeModelId(taskId)}.${ext}`)
+}
+
+function localModelUrl(taskId, ext = 'glb') {
+  return `/api/3d/local-model/${encodeURIComponent(sanitizeModelId(taskId))}.${ext}`
 }
 
 async function serveLocalModel(url, response) {
-  const fileName = decodeURIComponent(url.pathname.replace('/api/3d/local-model/', '')).replace(/\.glb$/i, '')
-  const buffer = await readFile(localModelPath(fileName))
+  const rawFileName = decodeURIComponent(url.pathname.replace('/api/3d/local-model/', ''))
+  const ext = getModelExtension(rawFileName)
+  const modelId = rawFileName.replace(/\.(?:glb|gltf)$/i, '')
+  const buffer = await readFile(localModelPath(modelId, ext))
   response.writeHead(200, {
-    'Content-Type': 'model/gltf-binary',
+    'Content-Type': ext === 'gltf' ? 'model/gltf+json' : 'model/gltf-binary',
     'Cache-Control': 'private, max-age=3600',
   })
   response.end(buffer)
+}
+
+async function importLocalModel(request, url) {
+  const fileName = sanitizeFileName(url.searchParams.get('fileName') || 'local-model.glb')
+  const ext = getModelExtension(fileName)
+  const buffer = await readRawBody(request, MODEL_UPLOAD_LIMIT)
+  validateModelBuffer(buffer, ext)
+
+  const baseName = fileName.replace(/\.(?:glb|gltf)$/i, '') || 'local-model'
+  const modelId = `local-${Date.now()}-${baseName}`
+  await saveLocalModel(modelId, buffer, ext)
+
+  return {
+    provider: 'local',
+    taskId: sanitizeModelId(modelId),
+    status: 'success',
+    progress: 100,
+    modelUrl: localModelUrl(modelId, ext),
+    rawModelUrl: '',
+    fileName,
+  }
+}
+
+async function cacheRemoteModel(taskId, rawModelUrl) {
+  const ext = getModelExtension(rawModelUrl)
+  if (await hasLocalModel(taskId, ext)) return localModelUrl(taskId, ext)
+
+  await mkdir(LOCAL_MODEL_DIR, { recursive: true })
+  const targetPath = localModelPath(taskId, ext)
+  const tempPath = `${targetPath}.${Date.now()}.tmp`
+
+  try {
+    const remote = await fetchRemoteModel(rawModelUrl)
+    await pipeline(Readable.fromWeb(remote.body), createWriteStream(tempPath))
+    const buffer = await readFile(tempPath)
+    validateModelBuffer(buffer, ext)
+    await rename(tempPath, targetPath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {})
+    throw error
+  }
+
+  return localModelUrl(taskId, ext)
+}
+
+async function fetchRemoteModel(rawUrl) {
+  const fetchOptions = shouldUseProxy(rawUrl) && OUTBOUND_PROXY_AGENT ? { dispatcher: OUTBOUND_PROXY_AGENT } : {}
+  const remote = await undiciFetch(rawUrl, fetchOptions)
+  if (remote.ok && remote.body) return remote
+
+  const retry = await undiciFetch(rawUrl, {
+    headers: { Authorization: `Bearer ${TRIPO_API_KEY}` },
+    ...fetchOptions,
+  })
+  if (retry.ok && retry.body) return retry
+
+  throw Object.assign(new Error(`Model download failed with ${retry.status || remote.status}.`), { status: 502 })
+}
+
+function getModelExtension(value) {
+  const pathname = /^https?:\/\//i.test(String(value)) ? new URL(value).pathname : String(value)
+  const ext = path.extname(pathname).replace('.', '').toLowerCase()
+  if (ext === 'gltf') return 'gltf'
+  if (ext === 'glb') return 'glb'
+  throw Object.assign(new Error('Only GLB or self-contained GLTF models are supported.'), { status: 400 })
+}
+
+function validateModelBuffer(buffer, ext = 'glb') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 32) {
+    throw Object.assign(new Error('Model file is too small or invalid.'), { status: 400 })
+  }
+
+  if (ext === 'glb') {
+    if (buffer.subarray(0, 4).toString('ascii') !== 'glTF') {
+      throw Object.assign(new Error('GLB files must start with a glTF binary header.'), { status: 400 })
+    }
+    return
+  }
+
+  try {
+    JSON.parse(buffer.toString('utf8'))
+  } catch {
+    throw Object.assign(new Error('GLTF files must be valid JSON.'), { status: 400 })
+  }
+}
+
+function sanitizeModelId(value) {
+  return sanitizeFileName(String(value)).replace(/\.(?:glb|gltf)$/i, '').replace(/\s+/g, '-').slice(0, 96) || `model-${Date.now()}`
 }
 
 function sanitizeHunyuanRaw(raw) {

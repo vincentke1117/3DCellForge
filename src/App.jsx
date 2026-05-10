@@ -444,6 +444,7 @@ function getProviderPlan(provider) {
 }
 
 function getProviderLabel(provider) {
+  if (provider === 'local') return 'Local'
   return GENERATION_PROVIDER_OPTIONS.find((item) => item.id === provider)?.label ?? 'Tripo'
 }
 
@@ -452,6 +453,16 @@ async function create3dGeneration({ provider, imageDataUrl, fileName, prompt }) 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, imageDataUrl, fileName, prompt }),
+  })
+
+  return readApiResponse(response)
+}
+
+async function uploadLocal3dModel(file) {
+  const response = await fetch(apiUrl(`/api/3d/local-model?fileName=${encodeURIComponent(file.name)}`), {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'model/gltf-binary' },
+    body: file,
   })
 
   return readApiResponse(response)
@@ -512,27 +523,32 @@ function inferCellTemplate(fileName) {
   return 'animal'
 }
 
-function createCustomCell(fileName, imageUrl) {
+function isLocalModelFile(file) {
+  return /\.(?:glb|gltf)$/i.test(file.name)
+}
+
+function createCustomCell(fileName, imageUrl, options = {}) {
   const template = inferCellTemplate(fileName)
   const base = getCell(template)
   const name = cleanFileName(fileName) || 'Uploaded Cell'
+  const provider = options.provider || 'tripo'
 
   return {
     id: `custom-${Date.now()}`,
     name: name.length > 20 ? `${name.slice(0, 20)}...` : name,
-    type: `Uploaded ${base.name}`,
+    type: options.type || `Uploaded ${base.name}`,
     accent: base.accent,
     custom: true,
     template,
     imageUrl,
     generation: {
-      provider: 'tripo',
-      requestedProvider: 'tripo',
-      status: 'queued',
-      taskId: '',
-      modelUrl: '',
-      rawModelUrl: '',
-      message: 'Waiting for image-to-3D generation.',
+      provider,
+      requestedProvider: options.requestedProvider || provider,
+      status: options.status || 'queued',
+      taskId: options.taskId || '',
+      modelUrl: options.modelUrl || '',
+      rawModelUrl: options.rawModelUrl || '',
+      message: options.message || 'Waiting for image-to-3D generation.',
     },
   }
 }
@@ -1886,22 +1902,23 @@ function BottomDeck({ selectedCell, selectedMicroscope, setSelectedMicroscope, u
           ))}
           <button
             type="button"
-            className={uploadedImage ? 'add-image active with-preview' : 'add-image'}
-            style={uploadedImage ? { '--upload-preview': `url(${uploadedImage.url})` } : undefined}
+            className={uploadedImage ? `add-image active ${uploadedImage.url ? 'with-preview' : 'with-model'}` : 'add-image'}
+            style={uploadedImage?.url ? { '--upload-preview': `url(${uploadedImage.url})` } : undefined}
             onClick={() => fileInputRef.current?.click()}
           >
-            <Image size={16} />
-            {uploadedImage?.name || 'Generate 3D'}
+            {uploadedImage?.url ? <Image size={16} /> : <Box size={16} />}
+            {uploadedImage?.name || 'Add Image / GLB'}
           </button>
           <input
             ref={fileInputRef}
             className="hidden-file-input"
             type="file"
-            accept="image/*"
+            accept="image/*,.glb,.gltf,model/gltf-binary,model/gltf+json"
             onChange={(event) => {
               const file = event.target.files?.[0]
               if (!file) return
               onUploadImage(file)
+              event.target.value = ''
             }}
           />
         </div>
@@ -2470,6 +2487,11 @@ function App() {
   }
 
   async function handleUploadImage(file) {
+    if (isLocalModelFile(file)) {
+      await handleUploadLocalModel(file)
+      return
+    }
+
     setToast('Uploading image for 3D generation')
     let customCell = null
     try {
@@ -2505,6 +2527,59 @@ function App() {
         }))
       }
       setToast(error instanceof Error ? error.message : 'Image-to-3D generation failed')
+    }
+  }
+
+  async function handleUploadLocalModel(file) {
+    setToast('Importing local 3D model')
+    let customCell = null
+
+    try {
+      customCell = createCustomCell(file.name, '', {
+        provider: 'local',
+        requestedProvider: 'local',
+        type: 'Local 3D Model',
+        status: 'uploading',
+        message: 'Saving model to local cache.',
+      })
+      const nextCustomCells = [customCell, ...customCells].slice(0, 8)
+
+      setCustomCells(nextCustomCells)
+      storeValue(CUSTOM_CELL_STORAGE_KEY, nextCustomCells)
+      setUploadedImage({ name: file.name, url: '' })
+      setSelectedCell(customCell.id)
+      setSelectedOrganelle(getDefaultOrganelle(customCell.id))
+      setCompareCell(customCell.template)
+      setActivePanel('Library')
+
+      const localModel = await uploadLocal3dModel(file)
+      updateCustomCell(customCell.id, (cell) => ({
+        generation: {
+          ...cell.generation,
+          provider: 'local',
+          requestedProvider: 'local',
+          status: 'success',
+          taskId: localModel.taskId,
+          modelUrl: localModel.modelUrl,
+          rawModelUrl: '',
+          message: 'Local GLB loaded from disk cache.',
+        },
+      }))
+      setToast(`${customCell.name} local 3D model ready`)
+    } catch (error) {
+      console.error(error)
+      if (customCell) {
+        updateCustomCell(customCell.id, (cell) => ({
+          generation: {
+            ...cell.generation,
+            provider: 'local',
+            requestedProvider: 'local',
+            status: 'failed',
+            message: error instanceof Error ? error.message : 'Local model import failed.',
+          },
+        }))
+      }
+      setToast(error instanceof Error ? error.message : 'Local model import failed')
     }
   }
 

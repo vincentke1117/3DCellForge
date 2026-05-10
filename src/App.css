@@ -1635,6 +1635,20 @@
   display: none;
 }
 
+.add-image.with-model {
+  color: #315370;
+  border-style: solid;
+}
+
+.add-image.with-model svg {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-radius: 8px;
+  color: #2f6f9d;
+  background: rgba(207, 229, 240, 0.74);
+}
+
 .hidden-file-input {
   display: none;
 }

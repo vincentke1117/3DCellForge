@@ -65,6 +65,9 @@ Hunyuan Local Hunyuan3D generation only
 ```
 
 Tripo uploads use the current STS object-storage flow (`/upload/sts/token`) before creating an `image_to_model` task.
+Generated GLBs are cached by the Node backend under `.generated-models/`, so later views use the local copy instead of the temporary Tripo URL.
+
+You can also import a local `.glb` or self-contained `.gltf` from the Microscope View add button. Imported models become custom Cell Types and are served from the same local cache.
 
 Expected Hunyuan3D local API shape:
 
