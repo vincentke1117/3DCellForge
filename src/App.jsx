@@ -199,18 +199,24 @@ const CELL_PROFILES = {
 const DEFAULT_SETTINGS = {
   quality: 'balanced',
   compactUi: false,
+  generationProvider: 'auto',
 }
 
 const CUSTOM_CELL_STORAGE_KEY = 'bio-demo-custom-cells'
-const TRIPO_API_BASE = import.meta.env.VITE_TRIPO_API_BASE || 'http://127.0.0.1:8787'
+const MODEL_API_BASE = import.meta.env.VITE_MODEL_API_BASE || import.meta.env.VITE_TRIPO_API_BASE || 'http://127.0.0.1:8787'
 const GENERATION_POLL_INTERVAL_MS = 3500
 const GENERATION_TIMEOUT_MS = 8 * 60 * 1000
+const GENERATION_PROVIDER_OPTIONS = [
+  { id: 'auto', label: 'Auto', description: 'Tripo first, Hunyuan backup.' },
+  { id: 'tripo', label: 'Tripo', description: 'Cloud generation.' },
+  { id: 'hunyuan', label: 'Hunyuan', description: 'Local Hunyuan3D server.' },
+]
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path
   const normalized = path.startsWith('/') ? path : `/${path}`
   if (!normalized.startsWith('/api/')) return normalized
-  return `${TRIPO_API_BASE.replace(/\/$/, '')}${normalized}`
+  return `${MODEL_API_BASE.replace(/\/$/, '')}${normalized}`
 }
 
 const DEFAULT_ORGANELLE_BY_CELL = {
@@ -344,10 +350,10 @@ function getCellProfile(cellId, customCells = getStoredCustomCells()) {
       ...baseProfile,
       summary: hasGeneratedModel
         ? `AI-generated GLB from the uploaded image, using ${getCell(customCell.template).name} biology as context.`
-        : `Uploaded image queued for Tripo image-to-3D generation; fallback scaffold is ${getCell(customCell.template).name}.`,
+        : `Uploaded image queued for image-to-3D generation; fallback scaffold is ${getCell(customCell.template).name}.`,
       comparison: hasGeneratedModel
         ? 'This custom sample is loaded as a real generated GLB in the WebGL viewer.'
-        : `This custom sample will use the ${getCell(customCell.template).name} fallback while Tripo is generating.`,
+        : `This custom sample will use the ${getCell(customCell.template).name} fallback while generation is running.`,
       occurs: 'Uploaded by user as a custom microscope reference.',
       organelles: baseProfile.organelles,
     }
@@ -413,40 +419,48 @@ async function readApiResponse(response) {
   return payload
 }
 
-async function createTripoGeneration({ imageDataUrl, fileName, prompt }) {
+function getProviderPlan(provider) {
+  return provider === 'auto' ? ['tripo', 'hunyuan'] : [provider || 'tripo']
+}
+
+function getProviderLabel(provider) {
+  return GENERATION_PROVIDER_OPTIONS.find((item) => item.id === provider)?.label ?? 'Tripo'
+}
+
+async function create3dGeneration({ provider, imageDataUrl, fileName, prompt }) {
   const response = await fetch(apiUrl('/api/3d/generate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageDataUrl, fileName, prompt }),
+    body: JSON.stringify({ provider, imageDataUrl, fileName, prompt }),
   })
 
   return readApiResponse(response)
 }
 
-async function getTripoGenerationStatus(taskId) {
-  const response = await fetch(apiUrl(`/api/3d/status/${encodeURIComponent(taskId)}`))
+async function get3dGenerationStatus(taskId, provider) {
+  const response = await fetch(apiUrl(`/api/3d/status/${encodeURIComponent(taskId)}?provider=${encodeURIComponent(provider || 'tripo')}`))
   return readApiResponse(response)
 }
 
-async function waitForTripoModel(taskId, onStatus) {
+async function waitFor3dModel(taskId, provider, onStatus) {
   const deadline = Date.now() + GENERATION_TIMEOUT_MS
 
   while (Date.now() < deadline) {
     await delay(GENERATION_POLL_INTERVAL_MS)
-    const status = await getTripoGenerationStatus(taskId)
+    const status = await get3dGenerationStatus(taskId, provider)
     onStatus?.(status)
 
     if (['success', 'completed', 'complete', 'done'].includes(String(status.status).toLowerCase())) {
-      if (!status.modelUrl) throw new Error('Tripo finished but no GLB model URL was returned.')
+      if (!status.modelUrl) throw new Error(`${getProviderLabel(provider)} finished but no GLB model URL was returned.`)
       return status
     }
 
     if (['failed', 'error', 'cancelled', 'canceled'].includes(String(status.status).toLowerCase())) {
-      throw new Error(status.error || 'Tripo generation failed.')
+      throw new Error(status.error || `${getProviderLabel(provider)} generation failed.`)
     }
   }
 
-  throw new Error('Tripo generation timed out.')
+  throw new Error(`${getProviderLabel(provider)} generation timed out.`)
 }
 
 function getGenerationPrompt(cell) {
@@ -497,7 +511,7 @@ function createCustomCell(fileName, imageUrl) {
       taskId: '',
       modelUrl: '',
       rawModelUrl: '',
-      message: 'Waiting for Tripo generation.',
+      message: 'Waiting for image-to-3D generation.',
     },
   }
 }
@@ -1575,6 +1589,7 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
   const referenceImageUrl = cell.custom ? cell.imageUrl : ''
   const generatedModelUrl = getGeneratedModelUrl(cell)
   const generation = cell.custom ? cell.generation : null
+  const generationProviderLabel = getProviderLabel(generation?.provider)
   const detail = getOrganelleDetail(selectedCell, selectedOrganelle)
   const webglAvailable = canUseWebGL()
   const generationPending = cell.custom && !generatedModelUrl && generation?.status && !['failed', 'local'].includes(generation.status)
@@ -1659,12 +1674,12 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
       {referenceImageUrl && (
         <div className="custom-reference-layer">
           <img src={referenceImageUrl} alt={`${cell.name} uploaded reference`} />
-          <span>{generatedModelUrl ? 'Source image used for AI 3D generation' : 'Source image for Tripo generation'}</span>
+          <span>{generatedModelUrl ? `Source image used for ${generationProviderLabel} 3D generation` : `Source image for ${generationProviderLabel} generation`}</span>
         </div>
       )}
       {generationPending && (
         <div className="generation-overlay">
-          <strong>{generation.status === 'uploading' ? 'Uploading to Tripo' : 'Generating 3D Model'}</strong>
+          <strong>{generation.status === 'uploading' ? `Uploading to ${generationProviderLabel}` : `Generating with ${generationProviderLabel}`}</strong>
           <span>{generation.message || 'Waiting for AI-generated GLB...'}</span>
           <div className="generation-meter">
             <i />
@@ -1673,9 +1688,9 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
       )}
       {generationFailed && (
         <div className="generation-overlay failed">
-          <strong>Tripo generation failed</strong>
+          <strong>{generationProviderLabel} generation failed</strong>
           <span>{generation.message || 'The saved upload failed before a GLB was returned.'}</span>
-          <button type="button" onClick={() => onRetryGeneration?.(cell.id)}>Retry Tripo</button>
+          <button type="button" onClick={() => onRetryGeneration?.(cell.id)}>Retry Generation</button>
         </div>
       )}
       <button type="button" className={proofMode ? 'proof-launcher active' : 'proof-launcher'} onClick={handleProofMode} aria-pressed={proofMode}>
@@ -1685,7 +1700,7 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
       {proofMode && (
         <div className="proof-badge">
           <strong>LIVE WEBGL 3D</strong>
-          <span>{generatedModelUrl ? 'AI-generated GLB · OrbitControls · GLB export' : referenceImageUrl ? 'Tripo task pending · fallback 3D scaffold' : 'Exploded meshes · XYZ axes · GLB export'}</span>
+          <span>{generatedModelUrl ? `${generationProviderLabel} GLB · OrbitControls · GLB export` : referenceImageUrl ? `${generationProviderLabel} task pending · fallback 3D scaffold` : 'Exploded meshes · XYZ axes · GLB export'}</span>
         </div>
       )}
       {labelVisible && (
@@ -1695,7 +1710,7 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
         </button>
       )}
       <div className="stage-status">
-        {generatedModelUrl ? 'Tripo GLB loaded' : generationFailed ? 'Tripo failed; source image shown' : referenceImageUrl ? `Tripo ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · {autoRotate || proofMode ? 'Auto rotate' : 'Manual orbit'} · {viewMode}
+        {generatedModelUrl ? `${generationProviderLabel} GLB loaded` : generationFailed ? `${generationProviderLabel} failed; source image shown` : referenceImageUrl ? `${generationProviderLabel} ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · {autoRotate || proofMode ? 'Auto rotate' : 'Manual orbit'} · {viewMode}
       </div>
       {capturePulse && <div className="capture-pulse" />}
       <div className="stage-toolbar">
@@ -2113,6 +2128,24 @@ function WorkspaceDrawer({
               ))}
             </div>
           </div>
+          <div className="settings-row">
+            <span>
+              <strong>Generation Provider</strong>
+              <small>{GENERATION_PROVIDER_OPTIONS.find((item) => item.id === settings.generationProvider)?.description}</small>
+            </span>
+            <div className="segmented provider-segmented">
+              {GENERATION_PROVIDER_OPTIONS.map((provider) => (
+                <button
+                  key={provider.id}
+                  type="button"
+                  className={settings.generationProvider === provider.id ? 'active' : ''}
+                  onClick={() => onUpdateSettings({ ...settings, generationProvider: provider.id })}
+                >
+                  {provider.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="settings-row">
             <span>
               <strong>Compact UI</strong>
@@ -2296,56 +2329,88 @@ function App() {
     })
   }
 
-  async function generateCustomCellModel(customCell, imageUrl, fileName) {
-    updateCustomCell(customCell.id, (cell) => ({
-      generation: {
-        ...cell.generation,
-        status: 'uploading',
-        modelUrl: '',
-        rawModelUrl: '',
-        message: 'Sending image to backend.',
-      },
-    }))
-    setToast('Creating Tripo image-to-3D task')
+  async function generateCustomCellModel(customCell, imageUrl, fileName, requestedProvider = settings.generationProvider) {
+    const providers = getProviderPlan(requestedProvider)
+    const errors = []
 
-    const task = await createTripoGeneration({
-      imageDataUrl: imageUrl,
-      fileName,
-      prompt: getGenerationPrompt(customCell),
-    })
+    for (const provider of providers) {
+      const label = getProviderLabel(provider)
 
-    updateCustomCell(customCell.id, (cell) => ({
-      generation: {
-        ...cell.generation,
-        status: 'processing',
-        taskId: task.taskId,
-        message: 'Tripo is generating the GLB model.',
-      },
-    }))
-    setToast(`Tripo task started: ${task.taskId.slice(0, 8)}`)
+      try {
+        updateCustomCell(customCell.id, (cell) => ({
+          generation: {
+            ...cell.generation,
+            provider,
+            status: 'uploading',
+            modelUrl: '',
+            rawModelUrl: '',
+            message: `Sending image to ${label}.`,
+          },
+        }))
+        setToast(`Creating ${label} image-to-3D task`)
 
-    const finalStatus = await waitForTripoModel(task.taskId, (status) => {
-      updateCustomCell(customCell.id, (cell) => ({
-        generation: {
-          ...cell.generation,
-          status: status.status || 'processing',
-          taskId: task.taskId,
-          message: status.progress ? `Progress ${status.progress}%` : `Task status: ${status.status || 'processing'}`,
-        },
-      }))
-    })
+        const task = await create3dGeneration({
+          provider,
+          imageDataUrl: imageUrl,
+          fileName,
+          prompt: getGenerationPrompt(customCell),
+        })
 
-    updateCustomCell(customCell.id, (cell) => ({
-      generation: {
-        ...cell.generation,
-        status: 'success',
-        taskId: task.taskId,
-        modelUrl: finalStatus.modelUrl,
-        rawModelUrl: finalStatus.rawModelUrl,
-        message: 'AI-generated GLB loaded.',
-      },
-    }))
-    setToast(`${customCell.name} AI 3D model ready`)
+        updateCustomCell(customCell.id, (cell) => ({
+          generation: {
+            ...cell.generation,
+            provider,
+            status: 'processing',
+            taskId: task.taskId,
+            message: `${label} is generating the GLB model.`,
+          },
+        }))
+        setToast(`${label} task started: ${String(task.taskId).slice(0, 8)}`)
+
+        const finalStatus = await waitFor3dModel(task.taskId, provider, (status) => {
+          updateCustomCell(customCell.id, (cell) => ({
+            generation: {
+              ...cell.generation,
+              provider,
+              status: status.status || 'processing',
+              taskId: task.taskId,
+              message: status.progress ? `${label} progress ${status.progress}%` : `${label} status: ${status.status || 'processing'}`,
+            },
+          }))
+        })
+
+        updateCustomCell(customCell.id, (cell) => ({
+          generation: {
+            ...cell.generation,
+            provider,
+            status: 'success',
+            taskId: task.taskId,
+            modelUrl: finalStatus.modelUrl,
+            rawModelUrl: finalStatus.rawModelUrl,
+            message: `${label} GLB loaded.`,
+          },
+        }))
+        setToast(`${customCell.name} ${label} 3D model ready`)
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `${label} generation failed.`
+        errors.push(`${label}: ${message}`)
+
+        if (provider !== providers[providers.length - 1]) {
+          updateCustomCell(customCell.id, (cell) => ({
+            generation: {
+              ...cell.generation,
+              provider,
+              status: 'processing',
+              message: `${label} failed; trying ${getProviderLabel(providers[providers.indexOf(provider) + 1])}.`,
+            },
+          }))
+          setToast(`${label} failed; trying backup provider`)
+        }
+      }
+    }
+
+    throw new Error(errors.join(' | '))
   }
 
   async function handleRetryGeneration(cellId) {
@@ -2357,7 +2422,7 @@ function App() {
 
     setSelectedCell(cell.id)
     setSelectedOrganelle(getDefaultOrganelle(cell.id))
-    setToast('Retrying Tripo generation')
+    setToast('Retrying 3D generation')
 
     try {
       await generateCustomCellModel(cell, cell.imageUrl, `${cell.name}.png`)
@@ -2369,7 +2434,7 @@ function App() {
           status: 'failed',
           modelUrl: '',
           rawModelUrl: '',
-          message: error instanceof Error ? error.message : 'Tripo generation failed.',
+          message: error instanceof Error ? error.message : '3D generation failed.',
         },
       }))
       setToast(error instanceof Error ? error.message : 'Image-to-3D generation failed')
@@ -2377,13 +2442,14 @@ function App() {
   }
 
   async function handleUploadImage(file) {
-    setToast('Uploading image to Tripo')
+    setToast('Uploading image for 3D generation')
     let customCell = null
     try {
       const imageUrl = await fileToDataUrl(file)
       customCell = createCustomCell(file.name, imageUrl)
       customCell.generation = {
         ...customCell.generation,
+        provider: settings.generationProvider,
         status: 'uploading',
         message: 'Sending image to backend.',
       }
@@ -2404,7 +2470,7 @@ function App() {
           generation: {
             ...cell.generation,
             status: 'failed',
-            message: error instanceof Error ? error.message : 'Tripo generation failed.',
+            message: error instanceof Error ? error.message : '3D generation failed.',
           },
         }))
       }

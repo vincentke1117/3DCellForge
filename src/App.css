@@ -366,6 +366,10 @@
   gap: 4px;
 }
 
+.provider-segmented {
+  grid-template-columns: repeat(3, auto);
+}
+
 .compare-drawer-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
