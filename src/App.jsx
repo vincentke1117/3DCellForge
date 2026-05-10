@@ -1,0 +1,2529 @@
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas } from '@react-three/fiber'
+import { ContactShadows, Line, OrbitControls, RoundedBox, useGLTF } from '@react-three/drei'
+import { motion } from 'framer-motion'
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import {
+  BookOpen,
+  Box,
+  Camera,
+  ChevronDown,
+  CircleDot,
+  Dna,
+  Eye,
+  Grid3X3,
+  Heart,
+  Image,
+  Layers3,
+  Library,
+  Move3D,
+  RotateCcw,
+  Settings,
+  Sparkles as SparklesIcon,
+  Upload,
+  X,
+} from 'lucide-react'
+import * as THREE from 'three'
+import plantCellRender from './assets/cell-plant-render.png'
+import './App.css'
+
+const CELL_TYPES = [
+  { id: 'plant', name: 'Plant Cell', type: 'Eukaryotic Cell', accent: '#82b366' },
+  { id: 'white-blood', name: 'White Blood Cell', type: 'Immune Cell', accent: '#7e6edb' },
+  { id: 'neuron', name: 'Neuron', type: 'Nerve Cell', accent: '#8b5cf6' },
+  { id: 'epithelial', name: 'Epithelial Cell', type: 'Human Tissue Cell', accent: '#e07a7a' },
+  { id: 'bacteria', name: 'Bacteria Cell', type: 'Prokaryotic Cell', accent: '#5fbf9f' },
+  { id: 'animal', name: 'Animal Cell', type: 'Eukaryotic Cell', accent: '#459ccf' },
+  { id: 'muscle', name: 'Muscle Cell', type: 'Muscle Fiber', accent: '#d25762' },
+]
+
+const SEEDED_GENERATED_CELLS = [
+  {
+    id: 'tripo-epithelial-test',
+    name: 'Tripo Epithelial Test',
+    type: 'AI Generated Epithelial Cell',
+    accent: '#e07a7a',
+    custom: true,
+    template: 'epithelial',
+    imageUrl: '/epithelial_cell_3d_tripo_input.png',
+    generation: {
+      provider: 'tripo',
+      status: 'success',
+      taskId: 'dc44beb1-e1a1-4650-9337-fbe418b7b154',
+      modelUrl: '/generated-models/tripo-epithelial-cell-test.glb',
+      rawModelUrl: '',
+      message: 'Cached GLB from the verified Tripo epithelial test run.',
+    },
+  },
+  {
+    id: 'tripo-plant-test',
+    name: 'Tripo Plant Test',
+    type: 'AI Generated Plant Cell',
+    accent: '#82b366',
+    custom: true,
+    template: 'plant',
+    imageUrl: plantCellRender,
+    generation: {
+      provider: 'tripo',
+      status: 'success',
+      taskId: '1db80a91-e202-4494-b17b-147de74cae81',
+      modelUrl: '/generated-models/tripo-plant-cell-test.glb',
+      rawModelUrl: '',
+      message: 'Cached GLB from the verified Tripo test run.',
+    },
+  },
+]
+
+const ORGANELLES = {
+  nucleus: {
+    label: 'Nucleus',
+    title: 'Nucleus',
+    subtitle: 'Genetic control region',
+    size: 'About 6-10 um',
+    location: 'Central cytoplasm',
+    visible: 'Yes, stained purple',
+    note: 'White blood cells use a lobed nucleus to move through tight tissue spaces while coordinating immune response genes.',
+    accent: '#7b4bb4',
+  },
+  lysosome: {
+    label: 'Lysosome',
+    title: 'Lysosome',
+    subtitle: 'The cellular cleanup crew',
+    size: 'About 1-2 um',
+    location: 'Blood, lymph, and tissues',
+    visible: 'Yes, especially with stain',
+    note: 'Lysosomes contain enzymes that digest captured material and damaged cell components.',
+    accent: '#8d58b8',
+  },
+  mitochondria: {
+    label: 'Mitochondria',
+    title: 'Mitochondria',
+    subtitle: 'ATP production sites',
+    size: 'About 0.5-1 um',
+    location: 'Cytoplasm',
+    visible: 'Often with fluorescent dye',
+    note: 'Immune cells change mitochondrial activity as they activate, migrate, and respond to infection.',
+    accent: '#df7046',
+  },
+  membrane: {
+    label: 'Plasma Membrane',
+    title: 'Plasma Membrane',
+    subtitle: 'Selective outer boundary',
+    size: 'About 7-10 nm',
+    location: 'Cell perimeter',
+    visible: 'Indirectly visible',
+    note: 'The membrane receives immune signals and allows the cell to squeeze through tissue barriers.',
+    accent: '#7aa4bf',
+  },
+  granules: {
+    label: 'Secretory Granules',
+    title: 'Secretory Granules',
+    subtitle: 'Immune response packets',
+    size: 'About 0.1-1 um',
+    location: 'Cytoplasm',
+    visible: 'Yes, as colored dots',
+    note: 'Granules store proteins and signaling molecules released during immune defense.',
+    accent: '#5b82c4',
+  },
+}
+
+const ORGANELLE_ORDER = ['nucleus', 'lysosome', 'mitochondria', 'membrane', 'granules']
+
+const MICROSCOPE_IMAGES = [
+  { label: 'Light Microscope', tone: 'light', note: 'Bright-field texture and tissue context.' },
+  { label: 'Stained Selection', tone: 'purple', note: 'Contrast-enhanced organelle staining.' },
+  { label: 'Electron Microscope', tone: 'mono', note: 'High-detail grayscale surface scan.' },
+]
+
+const WORKSPACE_PANELS = {
+  Gallery: 'Saved render angles, microscope snapshots, and exported study plates.',
+  Library: 'Reference structures for cell walls, membranes, nuclei, lysosomes, and mitochondria.',
+  Notebooks: 'Observation notes linked to the selected cell and organelle.',
+  Settings: 'Viewer quality, labels, cross-section defaults, and export preferences.',
+  Compare: 'Side-by-side cell comparison for visual structure and biological role.',
+  Profile: 'Current workspace: Bio Visualization Prototype.',
+}
+
+const CELL_PROFILES = {
+  plant: {
+    summary: 'Rigid wall, large vacuole, chloroplast-like structures, Golgi stacks, and a clear nucleus.',
+    occurs: 'Leaves, stems, roots, and photosynthetic tissue.',
+    comparison: 'Has a rigid wall and chloroplast-like organelles; animal cells do not.',
+    compareTarget: 'animal',
+    organelles: ['membrane', 'nucleus', 'mitochondria', 'granules'],
+  },
+  'white-blood': {
+    summary: 'Soft immune cell with lobed nucleus, many lysosomes, granules, and deformable membrane.',
+    occurs: 'Blood, lymph, and inflamed tissue.',
+    comparison: 'More mobile and granular than epithelial cells; built for immune response.',
+    compareTarget: 'epithelial',
+    organelles: ['lysosome', 'nucleus', 'mitochondria', 'membrane', 'granules'],
+  },
+  neuron: {
+    summary: 'Compact soma with branching dendrite and axon-like extensions for signal routing.',
+    occurs: 'Brain, spinal cord, and peripheral nerves.',
+    comparison: 'Long membrane extensions dominate the shape; most other cells stay compact.',
+    compareTarget: 'muscle',
+    organelles: ['membrane', 'nucleus', 'mitochondria', 'granules'],
+  },
+  epithelial: {
+    summary: 'Sheet-like tissue cell with apical ridges, junction cues, membrane boundaries, and nucleus.',
+    occurs: 'Skin, ducts, organ linings, and protective surfaces.',
+    comparison: 'Designed for barrier tissue, unlike free-moving white blood cells.',
+    compareTarget: 'white-blood',
+    organelles: ['membrane', 'nucleus', 'mitochondria', 'granules'],
+  },
+  bacteria: {
+    summary: 'Prokaryotic capsule with nucleoid DNA, ribosome dots, pili, and a flagellum cue.',
+    occurs: 'Soil, water, gut flora, skin, and many environmental surfaces.',
+    comparison: 'No nucleus or membrane-bound organelles; the DNA sits in a nucleoid region.',
+    compareTarget: 'animal',
+    organelles: ['membrane', 'granules'],
+  },
+  animal: {
+    summary: 'Flexible eukaryotic cell with nucleus, mitochondria, vesicles, and soft membrane.',
+    occurs: 'Organs, connective tissue, blood-related tissues, and cultured samples.',
+    comparison: 'Lacks the rigid wall shown in plant cells.',
+    compareTarget: 'plant',
+    organelles: ['membrane', 'nucleus', 'mitochondria', 'lysosome', 'granules'],
+  },
+  muscle: {
+    summary: 'Elongated fiber-like cell with striation cues and extra mitochondria for contraction.',
+    occurs: 'Skeletal muscle, cardiac tissue, and contractile tissue samples.',
+    comparison: 'Elongated and energy-heavy compared with round animal cells.',
+    compareTarget: 'neuron',
+    organelles: ['membrane', 'nucleus', 'mitochondria', 'granules'],
+  },
+}
+
+const DEFAULT_SETTINGS = {
+  quality: 'balanced',
+  compactUi: false,
+}
+
+const CUSTOM_CELL_STORAGE_KEY = 'bio-demo-custom-cells'
+const TRIPO_API_BASE = import.meta.env.VITE_TRIPO_API_BASE || 'http://127.0.0.1:8787'
+const GENERATION_POLL_INTERVAL_MS = 3500
+const GENERATION_TIMEOUT_MS = 8 * 60 * 1000
+
+function apiUrl(path) {
+  if (/^https?:\/\//i.test(path)) return path
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  if (!normalized.startsWith('/api/')) return normalized
+  return `${TRIPO_API_BASE.replace(/\/$/, '')}${normalized}`
+}
+
+const DEFAULT_ORGANELLE_BY_CELL = {
+  plant: 'membrane',
+  'white-blood': 'lysosome',
+  neuron: 'nucleus',
+  epithelial: 'membrane',
+  bacteria: 'granules',
+  animal: 'nucleus',
+  muscle: 'mitochondria',
+}
+
+const CELL_DETAIL_OVERRIDES = {
+  plant: {
+    nucleus: {
+      subtitle: 'The command center',
+      size: '5-10 um in diameter',
+      location: 'Usually central',
+      visible: 'Yes',
+      note: 'The nucleus is surrounded by a double membrane called the nuclear envelope, which contains pores that regulate the movement of molecules in and out.',
+      funFact: 'The nucleus was one of the first cell structures discovered.',
+    },
+    membrane: {
+      title: 'Cell Wall',
+      subtitle: 'Rigid outer support',
+      size: 'About 0.1-10 um thick',
+      location: 'Outer boundary',
+      visible: 'Yes',
+      note: 'Plant cells have a rigid wall outside the membrane. It gives the cell shape and helps resist pressure from the large central vacuole.',
+      funFact: 'Cellulose fibers make plant cell walls strong and flexible.',
+    },
+    mitochondria: {
+      note: 'Mitochondria convert stored sugars into usable energy for growth, repair, and transport inside the plant cell.',
+      funFact: 'Plant cells have both mitochondria and chloroplasts.',
+    },
+    granules: {
+      title: 'Golgi Apparatus',
+      subtitle: 'Packaging and transport',
+      note: 'The Golgi modifies, sorts, and packages proteins and lipids before they move to their next destination.',
+      funFact: 'Golgi stacks look like folded ribbons in many educational renders.',
+    },
+  },
+  'white-blood': {
+    lysosome: {
+      note: 'White blood cells carry many lysosomes because they digest captured particles and damaged material during immune response.',
+      funFact: 'The clustered purple granules are emphasized here so they remain readable while rotating.',
+    },
+    nucleus: {
+      note: 'The lobed nucleus is a key visual feature of many immune cells and helps the cell deform through narrow tissue gaps.',
+    },
+  },
+  neuron: {
+    membrane: {
+      title: 'Axon and Dendrites',
+      subtitle: 'Signal-routing branches',
+      location: 'Extending from the soma',
+      note: 'Neurons depend on long membrane extensions to receive and transmit electrical signals across large distances.',
+      funFact: 'The branching structure matters more visually than a perfectly round cell body.',
+    },
+  },
+  epithelial: {
+    membrane: {
+      title: 'Apical Surface',
+      subtitle: 'Barrier and contact layer',
+      location: 'Tissue-facing edge',
+      note: 'Epithelial cells form sheets. The surface ridges and junction lines make that tissue architecture visible.',
+    },
+  },
+  bacteria: {
+    granules: {
+      title: 'Nucleoid and Ribosomes',
+      subtitle: 'Prokaryotic core material',
+      size: 'Not membrane bound',
+      location: 'Central cytoplasm',
+      note: 'Bacteria do not have a nucleus. The blue DNA coil and small ribosome dots represent the prokaryotic interior.',
+      funFact: 'The flagellum and pili are exaggerated for readability in the 3D viewer.',
+    },
+  },
+  animal: {
+    nucleus: {
+      note: 'Animal cells are shown with a softer membrane, central nucleus, mitochondria, and transport structures without a rigid wall.',
+    },
+  },
+  muscle: {
+    mitochondria: {
+      note: 'Muscle fibers contain many mitochondria because contraction needs sustained ATP production.',
+      funFact: 'The stripe pattern is a simplified sarcomere cue, not a literal molecular model.',
+    },
+  },
+}
+
+const CELL_BODY = {
+  plant: { color: '#b8d983', scale: [1.38, 1.04, 0.76], kind: 'box' },
+  'white-blood': { color: '#c9d3e6', scale: [1.34, 1.18, 0.92], kind: 'sphere' },
+  neuron: { color: '#d8c6ff', scale: [0.78, 0.68, 0.58], kind: 'sphere' },
+  epithelial: { color: '#efb4a6', scale: [1.22, 0.92, 0.52], kind: 'box' },
+  bacteria: { color: '#8ed9bc', scale: [0.9, 1, 0.56], kind: 'capsule' },
+  animal: { color: '#b8dcf2', scale: [1.18, 1.08, 0.9], kind: 'sphere' },
+  muscle: { color: '#e78a94', scale: [0.82, 1.1, 0.48], kind: 'capsule' },
+}
+
+function getStoredCustomCells() {
+  return loadStoredValue(CUSTOM_CELL_STORAGE_KEY, [])
+}
+
+function getAllCells(customCells = getStoredCustomCells()) {
+  const activeCustomCells = customCells.filter((cell) => cell.generation?.status !== 'failed')
+  const failedCustomCells = customCells.filter((cell) => cell.generation?.status === 'failed')
+
+  return [...activeCustomCells, ...SEEDED_GENERATED_CELLS, ...failedCustomCells, ...CELL_TYPES]
+}
+
+function getCell(cellId, customCells = getStoredCustomCells()) {
+  return getAllCells(customCells).find((cell) => cell.id === cellId) ?? CELL_TYPES[1]
+}
+
+function getCustomCell(cellId, customCells = getStoredCustomCells()) {
+  return [...customCells, ...SEEDED_GENERATED_CELLS].find((cell) => cell.id === cellId)
+}
+
+function getModelCellId(cellId, customCells = getStoredCustomCells()) {
+  return getCustomCell(cellId, customCells)?.template ?? cellId
+}
+
+function getCellProfile(cellId, customCells = getStoredCustomCells()) {
+  const customCell = getCustomCell(cellId, customCells)
+  if (customCell) {
+    const baseProfile = CELL_PROFILES[customCell.template] ?? CELL_PROFILES.animal
+    const hasGeneratedModel = Boolean(customCell.generation?.modelUrl)
+    return {
+      ...baseProfile,
+      summary: hasGeneratedModel
+        ? `AI-generated GLB from the uploaded image, using ${getCell(customCell.template).name} biology as context.`
+        : `Uploaded image queued for Tripo image-to-3D generation; fallback scaffold is ${getCell(customCell.template).name}.`,
+      comparison: hasGeneratedModel
+        ? 'This custom sample is loaded as a real generated GLB in the WebGL viewer.'
+        : `This custom sample will use the ${getCell(customCell.template).name} fallback while Tripo is generating.`,
+      occurs: 'Uploaded by user as a custom microscope reference.',
+      organelles: baseProfile.organelles,
+    }
+  }
+
+  return CELL_PROFILES[cellId] ?? CELL_PROFILES['white-blood']
+}
+
+function getAvailableOrganelleIds(cellId) {
+  return getCellProfile(cellId).organelles ?? ORGANELLE_ORDER
+}
+
+function getDefaultOrganelle(cellId) {
+  const available = getAvailableOrganelleIds(cellId)
+  const preferred = DEFAULT_ORGANELLE_BY_CELL[cellId] ?? available[0]
+  return available.includes(preferred) ? preferred : available[0]
+}
+
+function getOrganelleDetail(cellId, organelleId) {
+  return {
+    ...ORGANELLES[organelleId],
+    ...(CELL_DETAIL_OVERRIDES[cellId]?.[organelleId] ?? {}),
+  }
+}
+
+function loadStoredValue(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function storeValue(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Storage can fail in private browsing; the UI should keep working.
+  }
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+async function readApiResponse(response) {
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error || `Request failed with ${response.status}`)
+  }
+  return payload
+}
+
+async function createTripoGeneration({ imageDataUrl, fileName, prompt }) {
+  const response = await fetch(apiUrl('/api/3d/generate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageDataUrl, fileName, prompt }),
+  })
+
+  return readApiResponse(response)
+}
+
+async function getTripoGenerationStatus(taskId) {
+  const response = await fetch(apiUrl(`/api/3d/status/${encodeURIComponent(taskId)}`))
+  return readApiResponse(response)
+}
+
+async function waitForTripoModel(taskId, onStatus) {
+  const deadline = Date.now() + GENERATION_TIMEOUT_MS
+
+  while (Date.now() < deadline) {
+    await delay(GENERATION_POLL_INTERVAL_MS)
+    const status = await getTripoGenerationStatus(taskId)
+    onStatus?.(status)
+
+    if (['success', 'completed', 'complete', 'done'].includes(String(status.status).toLowerCase())) {
+      if (!status.modelUrl) throw new Error('Tripo finished but no GLB model URL was returned.')
+      return status
+    }
+
+    if (['failed', 'error', 'cancelled', 'canceled'].includes(String(status.status).toLowerCase())) {
+      throw new Error(status.error || 'Tripo generation failed.')
+    }
+  }
+
+  throw new Error('Tripo generation timed out.')
+}
+
+function getGenerationPrompt(cell) {
+  const base = getCell(cell.template)
+  return [
+    `A high quality educational 3D biological model of a ${base.name}.`,
+    'Make it a single integrated specimen, not a flat relief, not a display base.',
+    'Preserve the recognizable major biological structures and use clean PBR materials.',
+    'Style: polished interactive science app, clear organelles, soft studio lighting.',
+  ].join(' ')
+}
+
+function getGeneratedModelUrl(cell) {
+  return cell.custom ? cell.generation?.modelUrl || '' : ''
+}
+
+function cleanFileName(fileName) {
+  return fileName.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim()
+}
+
+function inferCellTemplate(fileName) {
+  const name = fileName.toLowerCase()
+  if (name.includes('plant') || name.includes('leaf') || name.includes('chloroplast')) return 'plant'
+  if (name.includes('bacteria') || name.includes('bacillus') || name.includes('microbe')) return 'bacteria'
+  if (name.includes('neuron') || name.includes('nerve')) return 'neuron'
+  if (name.includes('muscle') || name.includes('fiber')) return 'muscle'
+  if (name.includes('epithelial') || name.includes('tissue')) return 'epithelial'
+  if (name.includes('blood') || name.includes('immune') || name.includes('wbc')) return 'white-blood'
+  return 'animal'
+}
+
+function createCustomCell(fileName, imageUrl) {
+  const template = inferCellTemplate(fileName)
+  const base = getCell(template)
+  const name = cleanFileName(fileName) || 'Uploaded Cell'
+
+  return {
+    id: `custom-${Date.now()}`,
+    name: name.length > 20 ? `${name.slice(0, 20)}...` : name,
+    type: `Uploaded ${base.name}`,
+    accent: base.accent,
+    custom: true,
+    template,
+    imageUrl,
+    generation: {
+      provider: 'tripo',
+      status: 'queued',
+      taskId: '',
+      modelUrl: '',
+      rawModelUrl: '',
+      message: 'Waiting for Tripo generation.',
+    },
+  }
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  downloadBlob(filename, blob)
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportObjectAsGlb(object) {
+  return new Promise((resolve, reject) => {
+    if (!object) {
+      reject(new Error('No exportable model is mounted.'))
+      return
+    }
+
+    const exportRoot = object.clone(true)
+    exportRoot.traverse((node) => {
+      if (!node.isMesh && !node.isLine && !node.isLineSegments) return
+
+      node.castShadow = false
+      node.receiveShadow = false
+      if (Array.isArray(node.material)) {
+        node.material = node.material.map((material) => material.clone())
+      } else if (node.material) {
+        node.material = node.material.clone()
+      }
+    })
+
+    const exporter = new GLTFExporter()
+    exporter.parse(
+      exportRoot,
+      (result) => {
+        if (result instanceof ArrayBuffer) {
+          resolve(new Blob([result], { type: 'model/gltf-binary' }))
+          return
+        }
+
+        resolve(new Blob([JSON.stringify(result)], { type: 'model/gltf+json' }))
+      },
+      (error) => reject(error),
+      {
+        binary: true,
+        onlyVisible: true,
+        trs: false,
+      },
+    )
+  })
+}
+
+function downloadCanvasImage(filename) {
+  const canvas = document.querySelector('.cell-viewer canvas')
+  if (!canvas) return false
+
+  try {
+    const link = document.createElement('a')
+    link.href = canvas.toDataURL('image/png')
+    link.download = filename
+    link.click()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function canUseWebGL() {
+  try {
+    const canvas = document.createElement('canvas')
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+  } catch {
+    return false
+  }
+}
+
+function seeded(index) {
+  const value = Math.sin(index * 12.9898 + 78.233) * 43758.5453
+  return value - Math.floor(value)
+}
+
+function pickSpherePoint(index, radius = 1) {
+  const theta = seeded(index * 3) * Math.PI * 2
+  const phi = Math.acos(2 * seeded(index * 3 + 1) - 1)
+  const spread = radius * (0.86 + seeded(index * 3 + 2) * 0.16)
+
+  return [
+    Math.sin(phi) * Math.cos(theta) * spread,
+    Math.sin(phi) * Math.sin(theta) * spread,
+    Math.cos(phi) * spread,
+  ]
+}
+
+function ClickableGroup({ id, onSelect, children, ...props }) {
+  return (
+    <group
+      {...props}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect(id)
+      }}
+    >
+      {children}
+    </group>
+  )
+}
+
+function PlantChloroplast({ position, rotation = [0, 0, 0], scale = 1 }) {
+  return (
+    <group position={position} rotation={rotation} scale={scale}>
+      <mesh>
+        <capsuleGeometry args={[0.13, 0.5, 14, 34]} />
+        <meshPhysicalMaterial color="#78b83d" roughness={0.42} clearcoat={0.35} clearcoatRoughness={0.35} />
+      </mesh>
+      {[-0.18, -0.09, 0, 0.09, 0.18].map((y) => (
+        <mesh key={y} position={[0, y, 0.035]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.085, 0.012, 8, 28]} />
+          <meshStandardMaterial color="#3f7d20" roughness={0.38} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function PlantMitochondrion({ position, rotation = [0, 0, 0], scale = 1 }) {
+  return (
+    <group position={position} rotation={rotation} scale={scale}>
+      <mesh>
+        <capsuleGeometry args={[0.095, 0.42, 12, 30]} />
+        <meshStandardMaterial color="#f07832" emissive="#b84213" emissiveIntensity={0.12} roughness={0.38} />
+      </mesh>
+      {[-0.13, 0, 0.13].map((y) => (
+        <Line
+          key={y}
+          points={[
+            [-0.055, y - 0.04, 0.08],
+            [0.055, y, 0.09],
+            [-0.035, y + 0.045, 0.08],
+          ]}
+          color="#ffd0a8"
+          lineWidth={1.4}
+          transparent
+          opacity={0.75}
+        />
+      ))}
+    </group>
+  )
+}
+
+function PlantGolgi({ position, rotation = [0, 0, 0] }) {
+  return (
+    <group position={position} rotation={rotation}>
+      {[-0.18, -0.09, 0, 0.09, 0.18].map((y, index) => (
+        <RoundedBox key={y} args={[0.56 - index * 0.035, 0.05, 0.07]} radius={0.025} smoothness={4} position={[0, y, index * 0.018]}>
+          <meshStandardMaterial color={index % 2 === 0 ? '#f28a72' : '#ef6f86'} roughness={0.42} />
+        </RoundedBox>
+      ))}
+      {[0, 1, 2, 3, 4].map((index) => (
+        <mesh key={index} position={[0.36 + seeded(index) * 0.16, -0.2 + index * 0.09, 0.05]}>
+          <sphereGeometry args={[0.045, 18, 18]} />
+          <meshStandardMaterial color="#f08b65" roughness={0.34} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function PlantCellWallPores() {
+  const pores = useMemo(
+    () =>
+      Array.from({ length: 46 }, (_, index) => {
+        const onHorizontal = index % 2 === 0
+        const side = seeded(index) > 0.5 ? 1 : -1
+        return {
+          position: onHorizontal
+            ? [(seeded(index + 10) - 0.5) * 2.85, side * (0.86 + seeded(index + 20) * 0.08), 0.29 + seeded(index + 30) * 0.05]
+            : [side * (1.45 + seeded(index + 10) * 0.08), (seeded(index + 20) - 0.5) * 1.55, 0.29 + seeded(index + 30) * 0.05],
+          scale: 0.018 + seeded(index + 40) * 0.018,
+        }
+      }),
+    [],
+  )
+
+  return (
+    <group>
+      {pores.map((pore, index) => (
+        <mesh key={index} position={pore.position} scale={[pore.scale * 1.45, pore.scale, pore.scale * 0.24]}>
+          <sphereGeometry args={[1, 12, 12]} />
+          <meshStandardMaterial color="#5e7f30" roughness={0.72} transparent opacity={0.62} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function PlantCellBubbles() {
+  const bubbles = useMemo(
+    () =>
+      Array.from({ length: 30 }, (_, index) => ({
+        position: [(seeded(index) - 0.5) * 2.35, (seeded(index + 50) - 0.5) * 1.25, 0.48 + seeded(index + 100) * 0.28],
+        radius: 0.025 + seeded(index + 150) * 0.045,
+      })),
+    [],
+  )
+
+  return (
+    <group>
+      {bubbles.map((bubble, index) => (
+        <mesh key={index} position={bubble.position}>
+          <sphereGeometry args={[bubble.radius, 18, 18]} />
+          <meshPhysicalMaterial
+            color="#d8f8ff"
+            transparent
+            opacity={0.38}
+            roughness={0.04}
+            metalness={0}
+            transmission={0.28}
+            thickness={0.2}
+            clearcoat={0.8}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function PlantReticulum() {
+  const lines = useMemo(
+    () => [
+      [
+        [0.14, 0.55, 0.58],
+        [0.38, 0.7, 0.62],
+        [0.78, 0.65, 0.58],
+        [1.04, 0.47, 0.54],
+      ],
+      [
+        [0.06, 0.26, 0.6],
+        [0.38, 0.12, 0.66],
+        [0.86, 0.2, 0.62],
+        [1.12, 0.02, 0.57],
+      ],
+      [
+        [0.1, -0.08, 0.62],
+        [0.36, -0.18, 0.7],
+        [0.78, -0.1, 0.64],
+        [1.02, -0.24, 0.58],
+      ],
+      [
+        [0.12, 0.42, 0.5],
+        [-0.12, 0.26, 0.58],
+        [-0.38, 0.12, 0.54],
+      ],
+    ],
+    [],
+  )
+
+  return (
+    <group>
+      {lines.map((points, index) => (
+        <Line key={index} points={points} color={index % 2 ? '#326eb2' : '#6d46bd'} lineWidth={2.1} transparent opacity={0.7} />
+      ))}
+    </group>
+  )
+}
+
+function PlantCellModel({ selected, crossSection, onSelect, hideOthers, proofMode }) {
+  const group = useRef()
+  const show = (id) => !hideOthers || id === selected || id === 'membrane'
+  const proofOffset = (id) => {
+    if (!proofMode) return [0, 0, 0]
+    return {
+      nucleus: [0.34, 0.18, 0.46],
+      granules: [-0.2, -0.04, 0.32],
+      mitochondria: [-0.42, 0.08, 0.56],
+      chloroplasts: [0.24, -0.18, 0.72],
+    }[id] ?? [0, 0, 0]
+  }
+  const ribosomes = useMemo(
+    () =>
+      Array.from({ length: 92 }, (_, index) => {
+        const point = pickSpherePoint(index + 20, 1)
+        return {
+          position: [point[0] * 1.4, point[1] * 0.84, 0.34 + seeded(index + 70) * 0.25],
+          radius: 0.018 + seeded(index + 120) * 0.018,
+          color: ['#d59a3d', '#8561bd', '#d76f7e', '#5aa4b5'][index % 4],
+        }
+      }),
+    [],
+  )
+
+  const fibers = useMemo(
+    () => [
+      [
+        [-1.25, -0.58, 0.42],
+        [-0.5, -0.38, 0.5],
+        [0.24, -0.56, 0.48],
+        [1.1, -0.35, 0.46],
+      ],
+      [
+        [-1.18, 0.45, 0.42],
+        [-0.3, 0.24, 0.52],
+        [0.55, 0.48, 0.48],
+        [1.2, 0.25, 0.44],
+      ],
+      [
+        [-0.95, -0.1, 0.5],
+        [-0.2, 0.05, 0.56],
+        [0.72, -0.03, 0.5],
+      ],
+    ],
+    [],
+  )
+
+  return (
+    <group ref={group} scale={1.12} rotation={[-0.54, -0.18, 0.02]}>
+        <ClickableGroup id="membrane" onSelect={onSelect}>
+          <RoundedBox args={[3.45, 2.16, 0.42]} radius={0.18} smoothness={8} position={[0, 0, 0.02]}>
+            <meshPhysicalMaterial color="#87a944" roughness={0.46} clearcoat={0.55} clearcoatRoughness={0.42} sheen={0.35} sheenColor="#dbe68e" />
+          </RoundedBox>
+          <PlantCellWallPores />
+          <RoundedBox args={[3.08, 1.78, 0.46]} radius={0.16} smoothness={8} position={[0, 0, 0.16]}>
+            <meshPhysicalMaterial
+              color="#7fb59d"
+              transparent
+              opacity={crossSection ? 0.48 : 0.62}
+              roughness={0.24}
+              metalness={0.02}
+              transmission={0.12}
+              depthWrite={false}
+              clearcoat={0.6}
+              clearcoatRoughness={0.18}
+            />
+          </RoundedBox>
+          {selected === 'membrane' && (
+            <RoundedBox args={[3.55, 2.26, 0.48]} radius={0.2} smoothness={8} position={[0, 0, 0.2]}>
+              <meshBasicMaterial color="#6b9844" wireframe transparent opacity={0.24} />
+            </RoundedBox>
+          )}
+        </ClickableGroup>
+
+        {show('granules') && (
+        <ClickableGroup id="granules" onSelect={onSelect} position={proofOffset('granules')}>
+          <mesh position={[-0.5, -0.05, 0.48]} rotation={[0.02, -0.1, -0.18]} scale={[0.58, 0.92, 0.16]}>
+            <sphereGeometry args={[0.7, 56, 56]} />
+            <meshPhysicalMaterial color="#6cc8ee" transparent opacity={0.84} roughness={0.08} clearcoat={0.88} clearcoatRoughness={0.08} transmission={0.1} />
+          </mesh>
+          <PlantGolgi position={[0.48, -0.38, 0.62]} rotation={[0, 0, 0.08]} />
+          <PlantCellBubbles />
+          {ribosomes.map((ribosome, index) => (
+            <mesh key={index} position={ribosome.position}>
+              <sphereGeometry args={[ribosome.radius, 12, 12]} />
+              <meshStandardMaterial color={ribosome.color} roughness={0.35} />
+            </mesh>
+          ))}
+        </ClickableGroup>
+        )}
+
+        {show('nucleus') && (
+        <ClickableGroup id="nucleus" onSelect={onSelect} position={[0.55 + proofOffset('nucleus')[0], 0.38 + proofOffset('nucleus')[1], 0.6 + proofOffset('nucleus')[2]]}>
+          <mesh scale={[0.56, 0.5, 0.28]}>
+            <sphereGeometry args={[0.58, 72, 72]} />
+            <meshPhysicalMaterial color="#8d55c7" roughness={0.36} clearcoat={0.35} transparent opacity={0.9} />
+          </mesh>
+          <mesh position={[0.06, -0.02, 0.18]} scale={[0.17, 0.17, 0.14]}>
+            <sphereGeometry args={[1, 40, 40]} />
+            <meshStandardMaterial color="#5a2f96" roughness={0.28} />
+          </mesh>
+          {[0.62, 0.78, 0.94].map((radius, index) => (
+            <mesh key={radius} rotation={[Math.PI / 2, 0, 0.05 * index]} position={[0, 0, -0.02 - index * 0.015]}>
+              <torusGeometry args={[radius, 0.018, 8, 90]} />
+              <meshStandardMaterial color={index % 2 ? '#6e45b8' : '#304f9b'} roughness={0.4} />
+            </mesh>
+          ))}
+          <PlantReticulum />
+          {selected === 'nucleus' && (
+            <mesh scale={[0.77, 0.68, 0.36]}>
+              <sphereGeometry args={[0.62, 48, 48]} />
+              <meshBasicMaterial color="#8d55c7" wireframe transparent opacity={0.32} />
+            </mesh>
+          )}
+        </ClickableGroup>
+        )}
+
+        {show('mitochondria') && (
+        <ClickableGroup id="mitochondria" onSelect={onSelect} position={proofOffset('mitochondria')}>
+          <PlantMitochondrion position={[-1.1, 0.48, 0.58]} rotation={[0.2, 0.18, -0.42]} scale={0.82} />
+          <PlantMitochondrion position={[1.2, 0.3, 0.56]} rotation={[0.2, -0.18, 0.62]} scale={0.88} />
+          <PlantMitochondrion position={[-0.85, -0.78, 0.55]} rotation={[0.15, 0.2, 1.45]} scale={0.82} />
+        </ClickableGroup>
+        )}
+
+        {show('granules') && (
+        <ClickableGroup id="granules" onSelect={onSelect} position={proofOffset('chloroplasts')}>
+          <PlantChloroplast position={[-1.18, -0.38, 0.58]} rotation={[0.15, -0.22, -0.9]} scale={1.05} />
+          <PlantChloroplast position={[-1.02, 0.76, 0.54]} rotation={[0.2, -0.1, -1.12]} scale={0.95} />
+          <PlantChloroplast position={[1.15, -0.58, 0.55]} rotation={[0.16, 0.12, 0.82]} scale={1.03} />
+          <PlantChloroplast position={[1.02, 0.7, 0.5]} rotation={[0.18, -0.16, 0.98]} scale={0.9} />
+          {fibers.map((points, index) => (
+            <Line key={index} points={points} color={index % 2 ? '#5f7fcb' : '#68a173'} lineWidth={1.5} transparent opacity={0.55} />
+          ))}
+        </ClickableGroup>
+        )}
+    </group>
+  )
+}
+
+function CellBodyGeometry({ kind }) {
+  if (kind === 'box') return <boxGeometry args={[1.9, 1.42, 0.9, 10, 10, 4]} />
+  if (kind === 'capsule') return <capsuleGeometry args={[0.42, 2.38, 18, 64]} />
+  return <sphereGeometry args={[1.32, 96, 96]} />
+}
+
+function CellSpecificStructures({ cellId, onSelect }) {
+  if (cellId === 'neuron') {
+    return (
+      <group>
+        <ClickableGroup id="membrane" onSelect={onSelect}>
+          {[
+            [
+              [-0.72, 0.2, 0.12],
+              [-1.46, 0.72, 0.05],
+              [-2.18, 0.94, -0.08],
+            ],
+            [
+              [-0.54, -0.08, 0.16],
+              [-1.28, -0.54, 0.08],
+              [-2.18, -0.86, -0.08],
+            ],
+            [
+              [-0.34, 0.38, 0.12],
+              [-0.88, 1.02, 0.04],
+              [-1.34, 1.44, -0.05],
+            ],
+            [
+              [0.64, 0.02, 0.08],
+              [1.55, 0.02, 0.02],
+              [2.65, -0.05, -0.04],
+              [3.34, 0.16, -0.1],
+            ],
+          ].map((points, index) => (
+            <Line key={index} points={points} color="#8b5cf6" lineWidth={3.2} transparent opacity={0.68} />
+          ))}
+          {[
+            [-2.18, 0.94, -0.08],
+            [-2.18, -0.86, -0.08],
+            [-1.34, 1.44, -0.05],
+            [3.34, 0.16, -0.1],
+          ].map((position, index) => (
+            <mesh key={index} position={position}>
+              <sphereGeometry args={[0.08, 20, 20]} />
+              <meshStandardMaterial color="#a78bfa" emissive="#6d28d9" emissiveIntensity={0.16} roughness={0.34} />
+            </mesh>
+          ))}
+        </ClickableGroup>
+      </group>
+    )
+  }
+
+  if (cellId === 'bacteria') {
+    const dna = Array.from({ length: 28 }, (_, index) => {
+      const x = index * 0.07 - 0.95
+      return [x, Math.sin(index * 0.9) * 0.16, 0.22]
+    })
+
+    return (
+      <group>
+        <ClickableGroup id="granules" onSelect={onSelect}>
+          <Line points={dna} color="#5b7fdf" lineWidth={3} transparent opacity={0.78} />
+          {Array.from({ length: 32 }, (_, index) => (
+            <mesh key={index} position={[(seeded(index) - 0.5) * 2.2, (seeded(index + 20) - 0.5) * 0.48, 0.24 + seeded(index + 40) * 0.2]}>
+              <sphereGeometry args={[0.025 + seeded(index + 60) * 0.018, 12, 12]} />
+              <meshStandardMaterial color={index % 2 ? '#2f9a7d' : '#5b82c4'} roughness={0.42} />
+            </mesh>
+          ))}
+        </ClickableGroup>
+        <ClickableGroup id="membrane" onSelect={onSelect}>
+          <Line points={[[1.54, -0.05, 0.02], [2.18, -0.22, -0.05], [2.8, -0.02, -0.1], [3.38, 0.2, -0.14]]} color="#52b788" lineWidth={3.4} transparent opacity={0.72} />
+          {[-0.8, -0.42, 0, 0.42, 0.8].map((x, index) => (
+            <Line
+              key={x}
+              points={[
+                [x, 0.35, 0.02],
+                [x + (index % 2 ? 0.08 : -0.08), 0.68, -0.05],
+              ]}
+              color="#69c6a9"
+              lineWidth={1.8}
+              transparent
+              opacity={0.64}
+            />
+          ))}
+        </ClickableGroup>
+      </group>
+    )
+  }
+
+  if (cellId === 'muscle') {
+    return (
+      <group>
+        <ClickableGroup id="membrane" onSelect={onSelect}>
+          {[-1.08, -0.78, -0.48, -0.18, 0.12, 0.42, 0.72, 1.02].map((x) => (
+            <Line key={x} points={[[x, -0.38, 0.26], [x + 0.16, 0.38, 0.26]]} color="#f8c4ca" lineWidth={2.2} transparent opacity={0.84} />
+          ))}
+          <Line points={[[-1.48, 0.1, 0.25], [-0.5, 0.18, 0.28], [0.5, 0.13, 0.28], [1.48, 0.2, 0.25]]} color="#ffe2e5" lineWidth={2.4} transparent opacity={0.72} />
+        </ClickableGroup>
+      </group>
+    )
+  }
+
+  if (cellId === 'epithelial') {
+    return (
+      <ClickableGroup id="membrane" onSelect={onSelect}>
+        {[-0.72, -0.36, 0, 0.36, 0.72].map((x) => (
+          <Line key={x} points={[[x, 0.58, 0.38], [x + 0.03, 0.92, 0.38]]} color="#b96363" lineWidth={2} transparent opacity={0.64} />
+        ))}
+        {[-0.46, 0, 0.46].map((x) => (
+          <Line key={x} points={[[x, -0.62, 0.42], [x, 0.62, 0.42]]} color="#f7d4cd" lineWidth={1.6} transparent opacity={0.72} />
+        ))}
+      </ClickableGroup>
+    )
+  }
+
+  if (cellId === 'white-blood') {
+    return (
+      <ClickableGroup id="membrane" onSelect={onSelect}>
+        {[
+          [-1.38, -0.08, 0.02, -0.5],
+          [1.36, 0.18, 0.04, 0.52],
+          [-0.3, 1.24, -0.02, 1.55],
+          [0.38, -1.18, -0.02, -1.48],
+        ].map(([x, y, z, angle], index) => (
+          <mesh key={index} position={[x, y, z]} rotation={[0.2, 0.08, angle]}>
+            <capsuleGeometry args={[0.11, 0.38, 10, 24]} />
+            <meshPhysicalMaterial color="#d7dfef" transparent opacity={0.64} roughness={0.36} clearcoat={0.35} />
+          </mesh>
+        ))}
+      </ClickableGroup>
+    )
+  }
+
+  if (cellId === 'animal') {
+    return (
+      <ClickableGroup id="granules" onSelect={onSelect}>
+        {[[-0.68, 0.64, 0.36], [0.72, -0.38, 0.4], [0.45, 0.62, 0.28]].map((position, index) => (
+          <mesh key={index} position={position} scale={[0.22, 0.16, 0.16]}>
+            <sphereGeometry args={[1, 28, 28]} />
+            <meshPhysicalMaterial color="#8cc9dd" transparent opacity={0.46} roughness={0.08} clearcoat={0.7} />
+          </mesh>
+        ))}
+      </ClickableGroup>
+    )
+  }
+
+  return null
+}
+
+function CellModel({ cellId, selected, crossSection, onSelect, hideOthers, proofMode }) {
+  const group = useRef()
+  const body = CELL_BODY[cellId] ?? CELL_BODY['white-blood']
+  const seedOffset = CELL_TYPES.findIndex((cell) => cell.id === cellId) * 100
+  const show = (id) => !hideOthers || id === selected || id === 'membrane'
+  const bodyRotation = body.kind === 'capsule' ? [0, 0, Math.PI / 2] : [0, 0, 0]
+  const bodyOpacity = hideOthers && selected !== 'membrane' ? 0.24 : crossSection ? 0.42 : 0.62
+  const proofOffset = (id) => {
+    if (!proofMode) return [0, 0, 0]
+    return {
+      nucleus: [0.34, 0.18, 0.42],
+      granules: [-0.28, -0.04, 0.46],
+      lysosome: [0.28, 0.26, 0.58],
+      mitochondria: [-0.38, -0.18, 0.62],
+    }[id] ?? [0, 0, 0]
+  }
+
+  const granules = useMemo(
+    () =>
+      Array.from({ length: cellId === 'bacteria' ? 48 : cellId === 'muscle' ? 34 : 88 }, (_, index) => {
+        const point = pickSpherePoint(index + seedOffset, body.kind === 'capsule' ? 1.1 : 1.4)
+        return {
+          position:
+            body.kind === 'capsule'
+              ? [(seeded(index + seedOffset) - 0.5) * 2.46, (seeded(index + seedOffset + 30) - 0.5) * 0.56, point[2] * 0.32]
+              : [point[0] * 1.04, point[1] * 0.92, point[2] * 0.74],
+          radius: 0.035 + seeded(index + 200) * 0.04,
+          color: ['#d8dde8', '#b6c3dc', '#8799d6', '#dab3d2'][index % 4],
+        }
+      }),
+    [body.kind, cellId, seedOffset],
+  )
+
+  const lysosomes = useMemo(
+    () =>
+      Array.from({ length: 13 }, (_, index) => ({
+        position: [1.28 + seeded(index + seedOffset) * 0.34, 0.56 + seeded(index + seedOffset + 40) * 0.64, -0.16 + seeded(index + seedOffset + 80) * 0.3],
+        radius: 0.06 + seeded(index + 120) * 0.035,
+      })),
+    [seedOffset],
+  )
+
+  const erLines = useMemo(
+    () => [
+      [
+        [-0.18, -0.86, 0.34],
+        [0.12, -0.76, 0.25],
+        [0.36, -0.9, 0.32],
+        [0.58, -0.72, 0.24],
+        [0.8, -0.84, 0.34],
+      ],
+      [
+        [-0.22, -1.02, 0.26],
+        [0.04, -1.15, 0.22],
+        [0.34, -1.04, 0.28],
+        [0.62, -1.16, 0.2],
+      ],
+      [
+        [0.02, -0.62, 0.36],
+        [0.34, -0.52, 0.32],
+        [0.6, -0.62, 0.38],
+        [0.88, -0.5, 0.28],
+      ],
+    ],
+    [],
+  )
+
+  return (
+      <group ref={group} scale={1.22} rotation={[-0.08, -0.42, 0.05]}>
+        <ClickableGroup id="membrane" onSelect={onSelect}>
+          <mesh scale={body.scale} rotation={bodyRotation}>
+            <CellBodyGeometry kind={body.kind} />
+            <meshPhysicalMaterial
+              color={body.color}
+              transparent
+              opacity={bodyOpacity}
+              roughness={0.34}
+              metalness={0.03}
+              transmission={body.kind === 'capsule' ? 0.06 : 0.14}
+              clearcoat={0.58}
+              clearcoatRoughness={0.2}
+            />
+          </mesh>
+          <mesh scale={body.scale.map((value) => value * 1.04)} rotation={bodyRotation}>
+            <CellBodyGeometry kind={body.kind} />
+            <meshBasicMaterial color="#f4f0e4" wireframe transparent opacity={selected === 'membrane' ? 0.3 : 0.12} />
+          </mesh>
+        </ClickableGroup>
+
+        {crossSection && (
+          <mesh position={[0.12, -0.04, 0.1]} rotation={[0, 0.05, 0]} scale={[1.58, 1.28, 1]}>
+            <circleGeometry args={[1.05, 96]} />
+            <meshBasicMaterial color="#f6e9dc" transparent opacity={0.32} side={THREE.DoubleSide} />
+          </mesh>
+        )}
+
+        {show('nucleus') && cellId !== 'bacteria' && (
+        <ClickableGroup id="nucleus" onSelect={onSelect} position={[-0.2 + proofOffset('nucleus')[0], 0.12 + proofOffset('nucleus')[1], 0.28 + proofOffset('nucleus')[2]]} rotation={[0.2, -0.12, -0.32]}>
+          <mesh position={[-0.25, 0.18, 0]} scale={[0.72, 0.5, 0.44]}>
+            <sphereGeometry args={[0.48, 64, 64]} />
+            <meshPhysicalMaterial color="#6f3a9b" roughness={0.36} clearcoat={0.32} emissive="#4c1d95" emissiveIntensity={0.08} />
+          </mesh>
+          <mesh position={[0.36, -0.24, 0.04]} scale={[0.76, 0.54, 0.44]}>
+            <sphereGeometry args={[0.48, 64, 64]} />
+            <meshPhysicalMaterial color="#753ca8" roughness={0.36} clearcoat={0.32} emissive="#4c1d95" emissiveIntensity={0.08} />
+          </mesh>
+          <mesh position={[0.08, -0.02, 0.02]} scale={[0.42, 0.28, 0.28]}>
+            <sphereGeometry args={[0.42, 48, 48]} />
+            <meshStandardMaterial color="#8449b8" roughness={0.48} />
+          </mesh>
+          {selected === 'nucleus' && (
+            <mesh scale={[1.42, 1.1, 0.78]} position={[0.04, -0.04, 0]}>
+              <sphereGeometry args={[0.68, 48, 48]} />
+              <meshBasicMaterial color="#7b4bb4" wireframe transparent opacity={0.28} />
+            </mesh>
+          )}
+        </ClickableGroup>
+        )}
+
+        {show('granules') && (
+        <ClickableGroup id="granules" onSelect={onSelect} position={proofOffset('granules')}>
+          {granules.map((granule, index) => (
+            <mesh key={index} position={granule.position}>
+              <sphereGeometry args={[granule.radius, 18, 18]} />
+              <meshStandardMaterial
+                color={granule.color}
+                emissive={selected === 'granules' ? '#5b82c4' : '#1e293b'}
+                emissiveIntensity={selected === 'granules' ? 0.25 : 0.02}
+                roughness={0.36}
+              />
+            </mesh>
+          ))}
+        </ClickableGroup>
+        )}
+
+        {show('lysosome') && cellId !== 'bacteria' && cellId !== 'muscle' && (
+        <ClickableGroup id="lysosome" onSelect={onSelect} position={proofOffset('lysosome')}>
+          {lysosomes.map((lysosome, index) => (
+            <mesh key={index} position={lysosome.position}>
+              <sphereGeometry args={[lysosome.radius, 24, 24]} />
+              <meshStandardMaterial
+                color={index % 2 === 0 ? '#7c3b91' : '#a15bb7'}
+                emissive="#5b2470"
+                emissiveIntensity={selected === 'lysosome' ? 0.45 : 0.16}
+                roughness={0.3}
+              />
+            </mesh>
+          ))}
+        </ClickableGroup>
+        )}
+
+        {show('mitochondria') && cellId !== 'bacteria' && (
+        <ClickableGroup id="mitochondria" onSelect={onSelect} position={proofOffset('mitochondria')}>
+          {[
+            [-0.78, -0.55, 0.48, 0.38],
+            [0.7, 0.1, 0.46, -0.35],
+            [0.96, -0.62, 0.16, 0.7],
+            ...(cellId === 'muscle'
+              ? [
+                  [-1.18, 0.18, 0.34, -0.72],
+                  [1.2, 0.24, 0.32, 0.58],
+                ]
+              : []),
+          ].map(([x, y, z, tilt], index) => (
+            <mesh key={index} position={[x, y, z]} rotation={[0.78, tilt, 0.95]} scale={selected === 'mitochondria' ? 1.08 : 1}>
+              <capsuleGeometry args={[0.105, 0.42, 10, 28]} />
+              <meshStandardMaterial color="#df7046" emissive="#c2410c" emissiveIntensity={0.22} roughness={0.34} />
+            </mesh>
+          ))}
+        </ClickableGroup>
+        )}
+
+        {show('granules') && cellId !== 'bacteria' && (
+        <ClickableGroup id="granules" onSelect={onSelect}>
+          {erLines.map((points, index) => (
+            <Line key={index} points={points} color="#d65e85" lineWidth={2.4} transparent opacity={0.78} />
+          ))}
+        </ClickableGroup>
+        )}
+
+        <CellSpecificStructures cellId={cellId} onSelect={onSelect} />
+      </group>
+  )
+}
+
+function SceneExportBridge({ exportRoot, onExporterReady }) {
+  useEffect(() => {
+    if (typeof onExporterReady !== 'function') return undefined
+
+    const exportCurrentModel = () => exportObjectAsGlb(exportRoot.current)
+    onExporterReady(() => exportCurrentModel)
+
+    return () => onExporterReady(null)
+  }, [exportRoot, onExporterReady])
+
+  return null
+}
+
+function ProofRig() {
+  const gridLines = useMemo(() => {
+    const lines = []
+    for (let i = -4; i <= 4; i += 1) {
+      lines.push({
+        key: `x-${i}`,
+        points: [[-2.4, -1.42, i * 0.45], [2.4, -1.42, i * 0.45]],
+      })
+      lines.push({
+        key: `z-${i}`,
+        points: [[i * 0.45, -1.42, -1.8], [i * 0.45, -1.42, 1.8]],
+      })
+    }
+    return lines
+  }, [])
+
+  return (
+    <group>
+      {gridLines.map((line) => (
+        <Line key={line.key} points={line.points} color="#9a8a72" lineWidth={0.8} transparent opacity={0.24} />
+      ))}
+      <Line points={[[-2.55, -1.38, 0], [2.65, -1.38, 0]]} color="#d94a4a" lineWidth={3.2} transparent opacity={0.78} />
+      <Line points={[[0, -1.48, 0], [0, 1.72, 0]]} color="#45a464" lineWidth={3.2} transparent opacity={0.78} />
+      <Line points={[[0, -1.38, -2.05], [0, -1.38, 2.25]]} color="#3b82f6" lineWidth={3.2} transparent opacity={0.78} />
+      {[0.65, 1.15, 1.65].map((radius) => (
+        <mesh key={radius} rotation={[Math.PI / 2, 0, 0]} position={[0, -1.36, 0]}>
+          <torusGeometry args={[radius, 0.006, 8, 96]} />
+          <meshBasicMaterial color="#7c6d5a" transparent opacity={0.22} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function GeneratedGlbModel({ modelUrl, proofMode, onSelect }) {
+  const gltf = useGLTF(modelUrl)
+  const { object, scale } = useMemo(() => {
+    const cloned = gltf.scene.clone(true)
+
+    cloned.traverse((node) => {
+      if (!node.isMesh) return
+      node.castShadow = true
+      node.receiveShadow = true
+      if (node.material) {
+        const materials = Array.isArray(node.material) ? node.material : [node.material]
+        materials.forEach((material) => {
+          material.side = THREE.DoubleSide
+          material.envMapIntensity = Math.max(material.envMapIntensity || 0, 1.15)
+          material.needsUpdate = true
+        })
+      }
+    })
+
+    const box = new THREE.Box3().setFromObject(cloned)
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    const longest = Math.max(size.x, size.y, size.z) || 1
+    cloned.position.sub(center)
+
+    return {
+      object: cloned,
+      scale: 3.25 / longest,
+    }
+  }, [gltf.scene])
+
+  return (
+    <group
+      scale={scale * (proofMode ? 0.92 : 1)}
+      rotation={[-0.12, -0.2, 0]}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect('membrane')
+      }}
+    >
+      <primitive object={object} />
+    </group>
+  )
+}
+
+function CellScene({ selectedCell, modelCellId, referenceImageUrl, generatedModelUrl, selectedOrganelle, crossSection, autoRotate, hideOthers, proofMode, renderQuality, onSelectOrganelle, onExporterReady = null }) {
+  const isPlant = modelCellId === 'plant'
+  const exportRoot = useRef(null)
+  const dpr = renderQuality === 'high' ? [1, 2] : [1, 1.4]
+
+  if (!canUseWebGL()) return null
+
+  return (
+    <Canvas
+      camera={{ position: [0, 0.1, 5.25], fov: 35 }}
+      shadows
+      dpr={dpr}
+      gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+      onCreated={({ gl }) => {
+        gl.toneMapping = THREE.ACESFilmicToneMapping
+        gl.toneMappingExposure = 1.08
+      }}
+      fallback={<CellFallback selectedCell={selectedCell} modelCellId={modelCellId} referenceImageUrl={referenceImageUrl} selectedOrganelle={selectedOrganelle} onSelectOrganelle={onSelectOrganelle} />}
+    >
+      <color attach="background" args={['#f5efdf']} />
+      <ambientLight intensity={0.82} />
+      <directionalLight castShadow position={[4, 5, 5]} intensity={3.4} color="#fff7ed" shadow-mapSize={[1024, 1024]} />
+      <directionalLight position={[-4.5, 2.6, 3]} intensity={1.65} color="#dbeafe" />
+      <pointLight position={[0, -3.2, 2.4]} intensity={1.35} color="#f9a8d4" />
+      <pointLight position={[-2.4, 1.2, 1.6]} intensity={0.75} color="#b8f7a6" />
+      {proofMode && <ProofRig />}
+      <group ref={exportRoot} name={`${selectedCell}-cell-export-root`}>
+        {generatedModelUrl ? (
+          <Suspense fallback={null}>
+            <GeneratedGlbModel modelUrl={apiUrl(generatedModelUrl)} proofMode={proofMode} onSelect={onSelectOrganelle} />
+          </Suspense>
+        ) : isPlant ? (
+          <PlantCellModel selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+        ) : (
+          <CellModel cellId={modelCellId} selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+        )}
+      </group>
+      <SceneExportBridge exportRoot={exportRoot} onExporterReady={onExporterReady} />
+      <ContactShadows frames={1} position={[0, -1.32, 0]} opacity={0.2} scale={5.4} blur={2.4} far={2.8} color="#8a7355" />
+      <OrbitControls enablePan={false} minDistance={proofMode ? 4 : 3.3} maxDistance={proofMode ? 7.4 : 6.4} enableDamping dampingFactor={0.08} autoRotate={autoRotate || proofMode} autoRotateSpeed={proofMode ? 0.75 : 0.45} />
+    </Canvas>
+  )
+}
+
+function CellFallback({ selectedCell, modelCellId, referenceImageUrl, selectedOrganelle, onSelectOrganelle }) {
+  const visualCellId = modelCellId ?? getModelCellId(selectedCell)
+  const fallbackGranules = Array.from({ length: 34 }, (_, index) => ({
+    left: 26 + seeded(index) * 50,
+    top: 22 + seeded(index + 80) * 52,
+    size: 5 + seeded(index + 140) * 8,
+    tone: index % 5,
+  }))
+
+  if (referenceImageUrl) {
+    return (
+      <div className="cell-fallback upload-render-fallback" aria-label="Uploaded cell image fallback">
+        <img src={referenceImageUrl} alt="Uploaded cell reference" />
+      </div>
+    )
+  }
+
+  if (visualCellId === 'plant') {
+    return (
+      <div className="cell-fallback plant-render-fallback" aria-label="Plant cell image fallback">
+        <img src={plantCellRender} alt="Detailed plant cell fallback render" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="cell-fallback" aria-label="Cell illustration fallback">
+      <button
+        type="button"
+        className={selectedOrganelle === 'membrane' ? `fallback-cell-body ${visualCellId} active` : `fallback-cell-body ${visualCellId}`}
+        onClick={() => onSelectOrganelle('membrane')}
+      >
+        <span className="fallback-texture" />
+        <span className="fallback-nucleus-one" onClick={(event) => {
+          event.stopPropagation()
+          onSelectOrganelle('nucleus')
+        }} />
+        <span className="fallback-nucleus-two" onClick={(event) => {
+          event.stopPropagation()
+          onSelectOrganelle('nucleus')
+        }} />
+        <span className="fallback-er" />
+        <span className="fallback-mito one" onClick={(event) => {
+          event.stopPropagation()
+          onSelectOrganelle('mitochondria')
+        }} />
+        <span className="fallback-mito two" onClick={(event) => {
+          event.stopPropagation()
+          onSelectOrganelle('mitochondria')
+        }} />
+        <span className="fallback-lysosomes" onClick={(event) => {
+          event.stopPropagation()
+          onSelectOrganelle('lysosome')
+        }} />
+        {fallbackGranules.map((granule, index) => (
+          <span
+            key={index}
+            className={`fallback-granule tone-${granule.tone}`}
+            style={{
+              left: `${granule.left}%`,
+              top: `${granule.top}%`,
+              width: `${granule.size}px`,
+              height: `${granule.size}px`,
+            }}
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelectOrganelle('granules')
+            }}
+          />
+        ))}
+      </button>
+    </div>
+  )
+}
+
+function CellThumb({ cell, selected }) {
+  return (
+    <span
+      className={`cell-thumb ${cell.custom ? 'custom-cell' : cell.id} ${selected ? 'selected' : ''}`}
+      style={{ '--cell-accent': cell.accent, '--thumb-image': cell.imageUrl ? `url(${cell.imageUrl})` : undefined }}
+    >
+      <span />
+    </span>
+  )
+}
+
+function LeftSidebar({ selectedCell, setSelectedCell, selectedOrganelle, setSelectedOrganelle, customCells }) {
+  const cells = getAllCells(customCells)
+  const availableOrganelles = getAvailableOrganelleIds(selectedCell)
+
+  return (
+    <aside className="left-rail">
+      <section className="panel cell-types-panel">
+        <header className="panel-title">
+          <span>
+            <SparklesIcon size={14} />
+            Cell Types
+          </span>
+          <ChevronDown size={14} />
+        </header>
+        <div className="cell-list">
+          {cells.map((cell) => (
+            <button
+              key={cell.id}
+              type="button"
+              className={selectedCell === cell.id ? 'cell-row active' : 'cell-row'}
+              onClick={() => setSelectedCell(cell.id)}
+            >
+              <CellThumb cell={cell} selected={selectedCell === cell.id} />
+              <span>
+                <strong>{cell.name}</strong>
+                <small>{cell.type}</small>
+              </span>
+              {selectedCell === cell.id && <Heart size={13} fill="currentColor" />}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel organelles-panel">
+        <header className="panel-title">
+          <span>
+            <CircleDot size={14} />
+            Organelles
+          </span>
+          <ChevronDown size={14} />
+        </header>
+        <div className="organelle-list">
+          {availableOrganelles.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={selectedOrganelle === id ? 'organelle-row active' : 'organelle-row'}
+              onClick={() => setSelectedOrganelle(id)}
+              style={{ '--dot': ORGANELLES[id].accent }}
+            >
+              <span className="dot" />
+              {ORGANELLES[id].label}
+            </button>
+          ))}
+        </div>
+      </section>
+    </aside>
+  )
+}
+
+function ViewerControls({ crossSection, setCrossSection, viewMode, setViewMode }) {
+  const modes = [
+    { id: 'solid', icon: Box, label: 'Solid' },
+    { id: 'layers', icon: Layers3, label: 'Layers' },
+    { id: 'focus', icon: CircleDot, label: 'Focus' },
+  ]
+
+  return (
+    <div className="viewer-controls">
+      <span>View Mode</span>
+      <div className="mode-buttons">
+        {modes.map((mode) => {
+          const Icon = mode.icon
+          return (
+            <button
+              key={mode.id}
+              type="button"
+              className={viewMode === mode.id ? 'active' : ''}
+              onClick={() => setViewMode(mode.id)}
+              title={mode.label}
+            >
+              <Icon size={17} />
+            </button>
+          )
+        })}
+      </div>
+      <label className="toggle-row">
+        <span>Cross-Section</span>
+        <input type="checkbox" checked={crossSection} onChange={(event) => setCrossSection(event.target.checked)} />
+        <i />
+      </label>
+    </div>
+  )
+}
+
+function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, crossSection, setCrossSection, labelVisible, renderQuality, customCells, onNotify, onExport, onExporterReady, onRetryGeneration }) {
+  const [viewMode, setViewMode] = useState('layers')
+  const [autoRotate, setAutoRotate] = useState(false)
+  const [isIsolated, setIsIsolated] = useState(false)
+  const [hideOthers, setHideOthers] = useState(false)
+  const [proofMode, setProofMode] = useState(false)
+  const [resetNonce, setResetNonce] = useState(0)
+  const [capturePulse, setCapturePulse] = useState(false)
+  const cell = getCell(selectedCell, customCells)
+  const modelCellId = cell.custom ? cell.template : selectedCell
+  const referenceImageUrl = cell.custom ? cell.imageUrl : ''
+  const generatedModelUrl = getGeneratedModelUrl(cell)
+  const generation = cell.custom ? cell.generation : null
+  const detail = getOrganelleDetail(selectedCell, selectedOrganelle)
+  const webglAvailable = canUseWebGL()
+  const generationPending = cell.custom && !generatedModelUrl && generation?.status && !['failed', 'local'].includes(generation.status)
+  const generationFailed = cell.custom && !generatedModelUrl && generation?.status === 'failed'
+
+  function handleRotate() {
+    const next = !autoRotate
+    setAutoRotate(next)
+    onNotify(next ? 'Auto rotate enabled' : 'Auto rotate paused')
+  }
+
+  function handleIsolate() {
+    const next = !isIsolated
+    setIsIsolated(next)
+    if (next) setViewMode('focus')
+    onNotify(next ? `${detail.title} focus mode` : 'Focus mode off')
+  }
+
+  function handleHideOthers() {
+    const next = !hideOthers
+    setHideOthers(next)
+    onNotify(next ? `Showing ${detail.title} with cell shell` : 'All structures visible')
+  }
+
+  function handleResetView() {
+    setAutoRotate(false)
+    setIsIsolated(false)
+    setHideOthers(false)
+    setProofMode(false)
+    setViewMode('layers')
+    setResetNonce((value) => value + 1)
+    onNotify('View reset')
+  }
+
+  function handleProofMode() {
+    const next = !proofMode
+    setProofMode(next)
+    if (next) {
+      setViewMode('focus')
+      setHideOthers(false)
+      setAutoRotate(true)
+    }
+    onNotify(next ? '3D proof mode: axes, grid, exploded meshes' : '3D proof mode off')
+  }
+
+  function handleScreenshot() {
+    const ok = downloadCanvasImage(`${selectedCell}-${selectedOrganelle}.png`)
+    setCapturePulse(true)
+    window.setTimeout(() => setCapturePulse(false), 280)
+    onNotify(ok ? 'Screenshot downloaded' : 'Screenshot unavailable in this browser')
+  }
+
+  return (
+    <section className="stage-panel">
+      <div className="stage-title">
+        <div>
+          <h1>{cell.name}</h1>
+          <p>{cell.type}</p>
+        </div>
+      </div>
+      <ViewerControls crossSection={crossSection} setCrossSection={setCrossSection} viewMode={viewMode} setViewMode={setViewMode} />
+      <div className={`cell-viewer ${viewMode} ${isIsolated ? 'is-isolated' : ''}`}>
+        <CellFallback selectedCell={selectedCell} modelCellId={modelCellId} referenceImageUrl={referenceImageUrl} selectedOrganelle={selectedOrganelle} onSelectOrganelle={setSelectedOrganelle} />
+        {!generationFailed && (
+          <CellScene
+            key={`${selectedCell}-${resetNonce}`}
+            selectedCell={selectedCell}
+            modelCellId={modelCellId}
+            referenceImageUrl={referenceImageUrl}
+            generatedModelUrl={generatedModelUrl}
+            selectedOrganelle={selectedOrganelle}
+            crossSection={crossSection}
+            autoRotate={autoRotate}
+            hideOthers={hideOthers}
+            proofMode={proofMode}
+            renderQuality={renderQuality}
+            onSelectOrganelle={setSelectedOrganelle}
+            onExporterReady={onExporterReady}
+          />
+        )}
+      </div>
+      {referenceImageUrl && (
+        <div className="custom-reference-layer">
+          <img src={referenceImageUrl} alt={`${cell.name} uploaded reference`} />
+          <span>{generatedModelUrl ? 'Source image used for AI 3D generation' : 'Source image for Tripo generation'}</span>
+        </div>
+      )}
+      {generationPending && (
+        <div className="generation-overlay">
+          <strong>{generation.status === 'uploading' ? 'Uploading to Tripo' : 'Generating 3D Model'}</strong>
+          <span>{generation.message || 'Waiting for AI-generated GLB...'}</span>
+          <div className="generation-meter">
+            <i />
+          </div>
+        </div>
+      )}
+      {generationFailed && (
+        <div className="generation-overlay failed">
+          <strong>Tripo generation failed</strong>
+          <span>{generation.message || 'The saved upload failed before a GLB was returned.'}</span>
+          <button type="button" onClick={() => onRetryGeneration?.(cell.id)}>Retry Tripo</button>
+        </div>
+      )}
+      <button type="button" className={proofMode ? 'proof-launcher active' : 'proof-launcher'} onClick={handleProofMode} aria-pressed={proofMode}>
+        <Box size={15} />
+        3D Proof
+      </button>
+      {proofMode && (
+        <div className="proof-badge">
+          <strong>LIVE WEBGL 3D</strong>
+          <span>{generatedModelUrl ? 'AI-generated GLB · OrbitControls · GLB export' : referenceImageUrl ? 'Tripo task pending · fallback 3D scaffold' : 'Exploded meshes · XYZ axes · GLB export'}</span>
+        </div>
+      )}
+      {labelVisible && (
+        <button type="button" className="stage-label" style={{ '--label-color': detail.accent }} onClick={() => setSelectedOrganelle(selectedOrganelle)}>
+          <span />
+          {detail.title}
+        </button>
+      )}
+      <div className="stage-status">
+        {generatedModelUrl ? 'Tripo GLB loaded' : generationFailed ? 'Tripo failed; source image shown' : referenceImageUrl ? `Tripo ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · {autoRotate || proofMode ? 'Auto rotate' : 'Manual orbit'} · {viewMode}
+      </div>
+      {capturePulse && <div className="capture-pulse" />}
+      <div className="stage-toolbar">
+        <button type="button" className={autoRotate ? 'active' : ''} onClick={handleRotate} aria-pressed={autoRotate}>
+          <Move3D size={14} />
+          Rotate
+        </button>
+        <button type="button" className={isIsolated ? 'active' : ''} onClick={handleIsolate} aria-pressed={isIsolated}>
+          <Eye size={14} />
+          Isolate
+        </button>
+        <button type="button" className={hideOthers ? 'active' : ''} onClick={handleHideOthers} aria-pressed={hideOthers}>
+          <Layers3 size={14} />
+          Hide Others
+        </button>
+        <button type="button" onClick={handleResetView}>
+          <RotateCcw size={14} />
+          Reset View
+        </button>
+        <button type="button" className={proofMode ? 'active proof-active' : ''} onClick={handleProofMode} aria-pressed={proofMode}>
+          <Box size={14} />
+          3D Proof
+        </button>
+        <span />
+        <button type="button" onClick={handleScreenshot}>
+          <Camera size={14} />
+          Screenshot
+        </button>
+        <button type="button" onClick={onExport}>
+          <Upload size={14} />
+          3D Export
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setFavoriteKey, labelVisible, setLabelVisible, onNotify }) {
+  const detail = getOrganelleDetail(selectedCell, selectedOrganelle)
+  const currentKey = `${selectedCell}:${selectedOrganelle}`
+  const isFavorite = favoriteKey === currentKey
+
+  function toggleFavorite() {
+    const next = isFavorite ? '' : currentKey
+    setFavoriteKey(next)
+    onNotify(isFavorite ? `${detail.title} removed from favorites` : `${detail.title} saved to favorites`)
+  }
+
+  function toggleLabel() {
+    const next = !labelVisible
+    setLabelVisible(next)
+    onNotify(next ? 'Stage label visible' : 'Stage label hidden')
+  }
+
+  return (
+    <aside className="right-rail">
+      <section className="panel detail-panel">
+        <header className="detail-title">
+          <span>Organelle Details</span>
+          <button type="button" className={isFavorite ? 'detail-fav active' : 'detail-fav'} onClick={toggleFavorite} aria-pressed={isFavorite}>
+            <Heart size={15} fill={isFavorite ? 'currentColor' : 'none'} />
+          </button>
+        </header>
+        <div className="detail-heading">
+          <div className="cluster-icon" style={{ '--cluster': detail.accent }}>
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <div>
+            <h2>{detail.title}</h2>
+            <p>{detail.subtitle}</p>
+          </div>
+        </div>
+        <dl className="detail-grid">
+          <div>
+            <dt>Size</dt>
+            <dd>{detail.size}</dd>
+          </div>
+          <div>
+            <dt>Location</dt>
+            <dd>{detail.location}</dd>
+          </div>
+          <div>
+            <dt>Visible in LM</dt>
+            <dd>{detail.visible}</dd>
+          </div>
+          <div>
+            <dt>Label</dt>
+            <dd>
+              <button type="button" className={labelVisible ? 'mini-toggle active' : 'mini-toggle'} onClick={toggleLabel} aria-pressed={labelVisible} aria-label="Toggle label" />
+              <span className="color-dot" style={{ background: detail.accent }} />
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="panel notes-panel">
+        <header className="panel-title">
+          <span>Biological Notes</span>
+        </header>
+        <p>{detail.note}</p>
+        <blockquote>{detail.funFact ?? 'Some white blood cells can change shape to squeeze between blood vessel walls and reach infected tissue.'}</blockquote>
+      </section>
+
+      <section className="panel occurs-panel">
+        <header className="panel-title">
+          <span>Where It Occurs</span>
+        </header>
+        <div className="body-map">
+          <div className="body-line" />
+          <div className="body-figure" />
+          <div className="target-cell">
+            <span />
+          </div>
+        </div>
+      </section>
+    </aside>
+  )
+}
+
+function BottomDeck({ selectedCell, selectedMicroscope, setSelectedMicroscope, uploadedImage, compareCell, onUploadImage, onCompare, onNotify }) {
+  const fileInputRef = useRef(null)
+  const selected = getCell(selectedCell)
+  const compareTarget = getCell(compareCell)
+
+  function handleMicroscopeSelect(item) {
+    setSelectedMicroscope(item.label)
+    onNotify(item.note)
+  }
+
+  return (
+    <section className="bottom-deck">
+      <div className="panel media-panel">
+        <header className="panel-title">
+          <span>Microscope View</span>
+          <small>3</small>
+        </header>
+        <div className="micro-grid">
+          {MICROSCOPE_IMAGES.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={selectedMicroscope === item.label ? `micro-card ${item.tone} active` : `micro-card ${item.tone}`}
+              onClick={() => handleMicroscopeSelect(item)}
+            >
+              <span />
+              <small>{item.label}</small>
+            </button>
+          ))}
+          <button
+            type="button"
+            className={uploadedImage ? 'add-image active with-preview' : 'add-image'}
+            style={uploadedImage ? { '--upload-preview': `url(${uploadedImage.url})` } : undefined}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Image size={16} />
+            {uploadedImage?.name || 'Generate 3D'}
+          </button>
+          <input
+            ref={fileInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/*"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (!file) return
+              onUploadImage(file)
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="panel compare-panel">
+        <header className="panel-title">
+          <span>Compare Cells</span>
+          <small>2</small>
+        </header>
+        <button type="button" className="compare-box" onClick={() => onCompare(compareTarget.id)}>
+          <CellThumb cell={selected} selected />
+          <div>
+            <strong>{selected.name.replace(' Cell', '')}</strong>
+            <small>{selected.type}</small>
+          </div>
+          <span className="versus">VS</span>
+          <CellThumb cell={compareTarget} />
+          <div>
+            <strong>{compareTarget.name}</strong>
+            <small>{compareTarget.type.replace('Human ', '')}</small>
+          </div>
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function StudioHeader({ activePanel, setActivePanel, onNotify }) {
+  function openPanel(panel) {
+    const next = activePanel === panel ? null : panel
+    setActivePanel(next)
+    onNotify(next ? `${panel} opened` : `${panel} closed`)
+  }
+
+  return (
+    <header className="studio-header">
+      <div className="studio-brand">
+        <div className="brand-mark">
+          <CellThumb cell={CELL_TYPES[1]} selected />
+        </div>
+        <div>
+          <strong>Cell Architecture Studio</strong>
+          <span>Explore life at the microscopic level</span>
+        </div>
+      </div>
+      <nav className="studio-nav">
+        <button type="button" className={activePanel === 'Gallery' ? 'active' : ''} onClick={() => openPanel('Gallery')}>
+          <Grid3X3 size={15} />
+          Gallery
+        </button>
+        <button type="button" className={activePanel === 'Library' ? 'active' : ''} onClick={() => openPanel('Library')}>
+          <Library size={15} />
+          Library
+        </button>
+        <button type="button" className={activePanel === 'Notebooks' ? 'active' : ''} onClick={() => openPanel('Notebooks')}>
+          <BookOpen size={15} />
+          Notebooks
+        </button>
+        <button type="button" className={activePanel === 'Settings' ? 'active' : ''} onClick={() => openPanel('Settings')}>
+          <Settings size={15} />
+          Settings
+        </button>
+      </nav>
+      <button type="button" className={activePanel === 'Profile' ? 'profile-button active' : 'profile-button'} onClick={() => openPanel('Profile')}>
+        <Dna size={18} />
+        <ChevronDown size={13} />
+      </button>
+    </header>
+  )
+}
+
+function WorkspaceDrawer({
+  activePanel,
+  selectedCell,
+  selectedOrganelle,
+  compareCell,
+  allCells = CELL_TYPES,
+  galleryItems,
+  notes,
+  settings,
+  labelVisible,
+  crossSection,
+  selectedMicroscope,
+  uploadedImage,
+  favoriteKey,
+  onClose,
+  onSelectCell,
+  onSelectOrganelle,
+  onSetCompareCell,
+  onSaveGallery,
+  onClearGallery,
+  onUpdateNote,
+  onUpdateSettings,
+  onSetLabelVisible,
+  onSetCrossSection,
+  onExport,
+  onNotify,
+}) {
+  if (!activePanel) return null
+
+  const cell = getCell(selectedCell)
+  const compare = getCell(compareCell)
+  const detail = getOrganelleDetail(selectedCell, selectedOrganelle)
+  const profile = getCellProfile(selectedCell)
+  const noteKey = `${selectedCell}:${selectedOrganelle}`
+  const noteValue = notes[noteKey] ?? ''
+  const savedFavorite = favoriteKey ? favoriteKey.replace(':', ' / ') : 'None'
+
+  function renderContent() {
+    if (activePanel === 'Gallery') {
+      return (
+        <div className="drawer-content">
+          <div className="gallery-hero">
+            <CellThumb cell={cell} selected />
+            <div>
+              <strong>{cell.name}</strong>
+              <span>{detail.title} · {selectedMicroscope}</span>
+            </div>
+          </div>
+          <div className="drawer-actions">
+            <button type="button" className="drawer-primary" onClick={onSaveGallery}>Save View</button>
+            <button type="button" className="drawer-secondary" onClick={onExport}>Export GLB</button>
+          </div>
+          {uploadedImage && (
+            <div className="uploaded-tile" style={{ '--upload-preview': `url(${uploadedImage.url})` }}>
+              <span />
+              <div>
+                <strong>{uploadedImage.name}</strong>
+                <small>Attached microscope reference</small>
+              </div>
+            </div>
+          )}
+          <div className="drawer-list">
+            {galleryItems.length === 0 ? (
+              <p className="empty-state">No saved views yet.</p>
+            ) : (
+              galleryItems.map((item) => {
+                const itemCell = getCell(item.cellId)
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="drawer-row"
+                    onClick={() => {
+                      onSelectCell(item.cellId)
+                      onSelectOrganelle(item.organelleId)
+                      onNotify('Saved view restored')
+                    }}
+                  >
+                    <CellThumb cell={itemCell} selected={item.cellId === selectedCell} />
+                    <span>
+                      <strong>{itemCell.name}</strong>
+                      <small>{getOrganelleDetail(item.cellId, item.organelleId).title} · {item.microscope}</small>
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+          {galleryItems.length > 0 && <button type="button" className="drawer-secondary full" onClick={onClearGallery}>Clear Gallery</button>}
+        </div>
+      )
+    }
+
+    if (activePanel === 'Library') {
+      return (
+        <div className="drawer-content">
+          <p className="drawer-copy">{profile.summary}</p>
+          <div className="library-grid">
+            {getAvailableOrganelleIds(selectedCell).map((id) => {
+              const item = getOrganelleDetail(selectedCell, id)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={selectedOrganelle === id ? 'library-card active' : 'library-card'}
+                  onClick={() => {
+                    onSelectOrganelle(id)
+                    onNotify(`${item.title} selected`)
+                  }}
+                >
+                  <span style={{ background: item.accent }} />
+                  <strong>{item.title}</strong>
+                  <small>{item.subtitle}</small>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )
+    }
+
+    if (activePanel === 'Notebooks') {
+      return (
+        <div className="drawer-content">
+          <label className="note-editor">
+            <span>{cell.name} / {detail.title}</span>
+            <textarea
+              value={noteValue}
+              onChange={(event) => onUpdateNote(noteKey, event.target.value)}
+              placeholder="Record observations, questions, or narration notes..."
+            />
+          </label>
+          <div className="drawer-meta inline">
+            <span>{noteValue.length} chars</span>
+            <span>Autosaved locally</span>
+            <span>{Object.keys(notes).length} notes</span>
+          </div>
+        </div>
+      )
+    }
+
+    if (activePanel === 'Settings') {
+      return (
+        <div className="drawer-content settings-list">
+          <label className="settings-row">
+            <span>
+              <strong>Organelle Labels</strong>
+              <small>Show the floating label on the stage.</small>
+            </span>
+            <input type="checkbox" checked={labelVisible} onChange={(event) => onSetLabelVisible(event.target.checked)} />
+          </label>
+          <label className="settings-row">
+            <span>
+              <strong>Cross-Section</strong>
+              <small>Keep the cutaway view enabled.</small>
+            </span>
+            <input type="checkbox" checked={crossSection} onChange={(event) => onSetCrossSection(event.target.checked)} />
+          </label>
+          <div className="settings-row">
+            <span>
+              <strong>Render Quality</strong>
+              <small>Balanced is faster; high uses denser DPR.</small>
+            </span>
+            <div className="segmented">
+              {['balanced', 'high'].map((quality) => (
+                <button
+                  key={quality}
+                  type="button"
+                  className={settings.quality === quality ? 'active' : ''}
+                  onClick={() => onUpdateSettings({ ...settings, quality })}
+                >
+                  {quality}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="settings-row">
+            <span>
+              <strong>Compact UI</strong>
+              <small>Slightly tighter panels for smaller screens.</small>
+            </span>
+            <input type="checkbox" checked={settings.compactUi} onChange={(event) => onUpdateSettings({ ...settings, compactUi: event.target.checked })} />
+          </label>
+        </div>
+      )
+    }
+
+    if (activePanel === 'Compare') {
+      return (
+        <div className="drawer-content">
+          <div className="compare-drawer-grid">
+            {[cell, compare].map((item) => {
+              const itemProfile = getCellProfile(item.id)
+              return (
+                <div key={item.id} className="compare-card">
+                  <CellThumb cell={item} selected={item.id === selectedCell} />
+                  <strong>{item.name}</strong>
+                  <small>{itemProfile.summary}</small>
+                </div>
+              )
+            })}
+          </div>
+          <p className="drawer-copy">{profile.comparison}</p>
+          <div className="cell-chip-grid">
+            {allCells.filter((item) => item.id !== selectedCell).map((item) => (
+              <button key={item.id} type="button" className={item.id === compareCell ? 'active' : ''} onClick={() => onSetCompareCell(item.id)}>
+                {item.name.replace(' Cell', '')}
+              </button>
+            ))}
+          </div>
+          <div className="drawer-actions">
+            <button type="button" className="drawer-primary" onClick={() => onSelectCell(compareCell)}>Open Compared Cell</button>
+            <button type="button" className="drawer-secondary" onClick={() => onSetCompareCell(profile.compareTarget)}>Reset Target</button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="drawer-content">
+        <div className="profile-stats">
+          <span><strong>{allCells.length}</strong><small>cells</small></span>
+          <span><strong>{galleryItems.length}</strong><small>saved</small></span>
+          <span><strong>{Object.keys(notes).length}</strong><small>notes</small></span>
+        </div>
+        <p className="drawer-copy">Favorite: {savedFavorite}</p>
+        <p className="drawer-copy">Occurs: {profile.occurs}</p>
+      </div>
+    )
+  }
+
+  return (
+    <motion.section className="workspace-drawer" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
+      <header>
+        <div>
+          <strong>{activePanel}</strong>
+          <span>{WORKSPACE_PANELS[activePanel]}</span>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close panel">
+          <X size={15} />
+        </button>
+      </header>
+      <div className="drawer-meta">
+        <span>{cell.name}</span>
+        <span>{detail.title}</span>
+        <span>Cross-section ready</span>
+      </div>
+      {renderContent()}
+    </motion.section>
+  )
+}
+
+function StatusToast({ message }) {
+  return (
+    <div className="status-toast">
+      <span />
+      {message}
+    </div>
+  )
+}
+
+function App() {
+  const [selectedCell, setSelectedCell] = useState('plant')
+  const [selectedOrganelle, setSelectedOrganelle] = useState('nucleus')
+  const [crossSection, setCrossSection] = useState(true)
+  const [activePanel, setActivePanel] = useState(null)
+  const [toast, setToast] = useState('Plant cell ready')
+  const [favoriteKey, setFavoriteKey] = useState('')
+  const [labelVisible, setLabelVisible] = useState(() => loadStoredValue('bio-demo-label-visible', true))
+  const [selectedMicroscope, setSelectedMicroscope] = useState(MICROSCOPE_IMAGES[0].label)
+  const [uploadedImage, setUploadedImage] = useState(null)
+  const [sceneExporter, setSceneExporter] = useState(null)
+  const [customCells, setCustomCells] = useState(() => loadStoredValue(CUSTOM_CELL_STORAGE_KEY, []))
+  const [compareCell, setCompareCell] = useState(getCellProfile('plant').compareTarget)
+  const [galleryItems, setGalleryItems] = useState(() => loadStoredValue('bio-demo-gallery', []))
+  const [notes, setNotes] = useState(() => loadStoredValue('bio-demo-notes', {}))
+  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...loadStoredValue('bio-demo-settings', DEFAULT_SETTINGS) }))
+  const allCells = useMemo(() => getAllCells(customCells), [customCells])
+
+  useEffect(() => {
+    storeValue('bio-demo-gallery', galleryItems)
+  }, [galleryItems])
+
+  useEffect(() => {
+    storeValue('bio-demo-notes', notes)
+  }, [notes])
+
+  useEffect(() => {
+    storeValue('bio-demo-settings', settings)
+  }, [settings])
+
+  useEffect(() => {
+    storeValue('bio-demo-label-visible', labelVisible)
+  }, [labelVisible])
+
+  useEffect(() => {
+    storeValue(CUSTOM_CELL_STORAGE_KEY, customCells)
+  }, [customCells])
+
+  function handleSelectCell(cellId) {
+    setSelectedCell(cellId)
+    setSelectedOrganelle(getDefaultOrganelle(cellId))
+    setCompareCell((current) => (current === cellId ? getCellProfile(cellId).compareTarget : current))
+    setToast(`${getCell(cellId).name} loaded`)
+  }
+
+  async function handleExport() {
+    const cell = getCell(selectedCell)
+    const detail = getOrganelleDetail(selectedCell, selectedOrganelle)
+
+    if (!sceneExporter) {
+      downloadJson(`${selectedCell}-cell-export.json`, {
+        cell,
+        selectedOrganelle,
+        detail,
+        crossSection,
+        selectedMicroscope,
+        exportedAt: new Date().toISOString(),
+        fallbackReason: 'WebGL model exporter is not available in this browser.',
+      })
+      setToast('WebGL unavailable; metadata exported')
+      return
+    }
+
+    setToast('Preparing GLB export')
+    try {
+      const glb = await sceneExporter()
+      downloadBlob(`${selectedCell}-${selectedOrganelle}.glb`, glb)
+      setToast(`${cell.name} GLB downloaded`)
+    } catch (error) {
+      console.error(error)
+      downloadJson(`${selectedCell}-cell-export.json`, {
+        cell,
+        selectedOrganelle,
+        detail,
+        crossSection,
+        selectedMicroscope,
+        exportedAt: new Date().toISOString(),
+        fallbackReason: error instanceof Error ? error.message : 'GLB export failed.',
+      })
+      setToast('GLB failed; metadata exported')
+    }
+  }
+
+  function updateCustomCell(cellId, patch) {
+    setCustomCells((current) => {
+      const next = current.map((cell) => (
+        cell.id === cellId
+          ? {
+              ...cell,
+              ...(typeof patch === 'function' ? patch(cell) : patch),
+            }
+          : cell
+      ))
+      storeValue(CUSTOM_CELL_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  async function generateCustomCellModel(customCell, imageUrl, fileName) {
+    updateCustomCell(customCell.id, (cell) => ({
+      generation: {
+        ...cell.generation,
+        status: 'uploading',
+        modelUrl: '',
+        rawModelUrl: '',
+        message: 'Sending image to backend.',
+      },
+    }))
+    setToast('Creating Tripo image-to-3D task')
+
+    const task = await createTripoGeneration({
+      imageDataUrl: imageUrl,
+      fileName,
+      prompt: getGenerationPrompt(customCell),
+    })
+
+    updateCustomCell(customCell.id, (cell) => ({
+      generation: {
+        ...cell.generation,
+        status: 'processing',
+        taskId: task.taskId,
+        message: 'Tripo is generating the GLB model.',
+      },
+    }))
+    setToast(`Tripo task started: ${task.taskId.slice(0, 8)}`)
+
+    const finalStatus = await waitForTripoModel(task.taskId, (status) => {
+      updateCustomCell(customCell.id, (cell) => ({
+        generation: {
+          ...cell.generation,
+          status: status.status || 'processing',
+          taskId: task.taskId,
+          message: status.progress ? `Progress ${status.progress}%` : `Task status: ${status.status || 'processing'}`,
+        },
+      }))
+    })
+
+    updateCustomCell(customCell.id, (cell) => ({
+      generation: {
+        ...cell.generation,
+        status: 'success',
+        taskId: task.taskId,
+        modelUrl: finalStatus.modelUrl,
+        rawModelUrl: finalStatus.rawModelUrl,
+        message: 'AI-generated GLB loaded.',
+      },
+    }))
+    setToast(`${customCell.name} AI 3D model ready`)
+  }
+
+  async function handleRetryGeneration(cellId) {
+    const cell = getCustomCell(cellId, customCells)
+    if (!cell?.imageUrl) {
+      setToast('No source image to retry')
+      return
+    }
+
+    setSelectedCell(cell.id)
+    setSelectedOrganelle(getDefaultOrganelle(cell.id))
+    setToast('Retrying Tripo generation')
+
+    try {
+      await generateCustomCellModel(cell, cell.imageUrl, `${cell.name}.png`)
+    } catch (error) {
+      console.error(error)
+      updateCustomCell(cell.id, (current) => ({
+        generation: {
+          ...current.generation,
+          status: 'failed',
+          modelUrl: '',
+          rawModelUrl: '',
+          message: error instanceof Error ? error.message : 'Tripo generation failed.',
+        },
+      }))
+      setToast(error instanceof Error ? error.message : 'Image-to-3D generation failed')
+    }
+  }
+
+  async function handleUploadImage(file) {
+    setToast('Uploading image to Tripo')
+    let customCell = null
+    try {
+      const imageUrl = await fileToDataUrl(file)
+      customCell = createCustomCell(file.name, imageUrl)
+      customCell.generation = {
+        ...customCell.generation,
+        status: 'uploading',
+        message: 'Sending image to backend.',
+      }
+      const nextCustomCells = [customCell, ...customCells].slice(0, 8)
+
+      setCustomCells(nextCustomCells)
+      storeValue(CUSTOM_CELL_STORAGE_KEY, nextCustomCells)
+      setUploadedImage({ name: file.name, url: imageUrl })
+      setSelectedCell(customCell.id)
+      setSelectedOrganelle(getDefaultOrganelle(customCell.id))
+      setCompareCell(customCell.template)
+      setActivePanel('Library')
+      await generateCustomCellModel(customCell, imageUrl, file.name)
+    } catch (error) {
+      console.error(error)
+      if (customCell) {
+        updateCustomCell(customCell.id, (cell) => ({
+          generation: {
+            ...cell.generation,
+            status: 'failed',
+            message: error instanceof Error ? error.message : 'Tripo generation failed.',
+          },
+        }))
+      }
+      setToast(error instanceof Error ? error.message : 'Image-to-3D generation failed')
+    }
+  }
+
+  function handleSaveGallery() {
+    const item = {
+      id: `${Date.now()}-${selectedCell}-${selectedOrganelle}`,
+      cellId: selectedCell,
+      organelleId: selectedOrganelle,
+      microscope: selectedMicroscope,
+      createdAt: new Date().toISOString(),
+    }
+    setGalleryItems((items) => [item, ...items].slice(0, 12))
+    setToast('View saved to Gallery')
+  }
+
+  function handleClearGallery() {
+    setGalleryItems([])
+    setToast('Gallery cleared')
+  }
+
+  function handleUpdateNote(noteKey, value) {
+    setNotes((current) => {
+      const next = { ...current }
+      if (value.trim()) next[noteKey] = value
+      else delete next[noteKey]
+      return next
+    })
+  }
+
+  function handleOpenCompare(cellId) {
+    setCompareCell(cellId)
+    setActivePanel('Compare')
+    setToast(`${getCell(selectedCell).name} compared with ${getCell(cellId).name}`)
+  }
+
+  return (
+    <main className={settings.compactUi ? 'studio-shell compact-ui' : 'studio-shell'}>
+      <motion.div className="studio-window" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.38 }}>
+        <StudioHeader activePanel={activePanel} setActivePanel={setActivePanel} onNotify={setToast} />
+        <WorkspaceDrawer
+          activePanel={activePanel}
+          selectedCell={selectedCell}
+          selectedOrganelle={selectedOrganelle}
+          compareCell={compareCell}
+          allCells={allCells}
+          galleryItems={galleryItems}
+          notes={notes}
+          settings={settings}
+          labelVisible={labelVisible}
+          crossSection={crossSection}
+          selectedMicroscope={selectedMicroscope}
+          uploadedImage={uploadedImage}
+          favoriteKey={favoriteKey}
+          onClose={() => setActivePanel(null)}
+          onSelectCell={handleSelectCell}
+          onSelectOrganelle={setSelectedOrganelle}
+          onSetCompareCell={(cellId) => {
+            setCompareCell(cellId)
+            setToast(`${getCell(cellId).name} set as comparison target`)
+          }}
+          onSaveGallery={handleSaveGallery}
+          onClearGallery={handleClearGallery}
+          onUpdateNote={handleUpdateNote}
+          onUpdateSettings={setSettings}
+          onSetLabelVisible={setLabelVisible}
+          onSetCrossSection={setCrossSection}
+          onExport={handleExport}
+          onNotify={setToast}
+        />
+        <StatusToast message={toast} />
+        <div className="studio-grid">
+          <LeftSidebar
+            selectedCell={selectedCell}
+            setSelectedCell={handleSelectCell}
+            selectedOrganelle={selectedOrganelle}
+            setSelectedOrganelle={setSelectedOrganelle}
+            customCells={customCells}
+          />
+          <CenterStage
+            selectedCell={selectedCell}
+            selectedOrganelle={selectedOrganelle}
+            setSelectedOrganelle={setSelectedOrganelle}
+            crossSection={crossSection}
+            setCrossSection={setCrossSection}
+            labelVisible={labelVisible}
+            renderQuality={settings.quality}
+            customCells={customCells}
+            onNotify={setToast}
+            onExport={handleExport}
+            onExporterReady={setSceneExporter}
+            onRetryGeneration={handleRetryGeneration}
+          />
+          <DetailPanel
+            selectedCell={selectedCell}
+            selectedOrganelle={selectedOrganelle}
+            favoriteKey={favoriteKey}
+            setFavoriteKey={setFavoriteKey}
+            labelVisible={labelVisible}
+            setLabelVisible={setLabelVisible}
+            onNotify={setToast}
+          />
+          <BottomDeck
+            selectedCell={selectedCell}
+            selectedMicroscope={selectedMicroscope}
+            setSelectedMicroscope={setSelectedMicroscope}
+            uploadedImage={uploadedImage}
+            onUploadImage={handleUploadImage}
+            compareCell={compareCell}
+            onCompare={handleOpenCompare}
+            onNotify={setToast}
+          />
+        </div>
+      </motion.div>
+    </main>
+  )
+}
+
+export default App
