@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 
 loadLocalEnv()
@@ -104,6 +105,11 @@ const server = http.createServer(async (request, response) => {
 
     sendJson(response, 404, { error: 'Not found' })
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy(error)
+      return
+    }
+
     const status = error.status || 500
     sendJson(response, status, {
       error: error.message || 'Server error',
@@ -578,11 +584,11 @@ async function proxyModel(url, response) {
     if (!retry.ok || !retry.body) {
       throw Object.assign(new Error(`Model download failed with ${retry.status || remote.status}.`), { status: 502 })
     }
-    streamRemoteModel(retry, response)
+    await streamRemoteModel(retry, response)
     return
   }
 
-  streamRemoteModel(remote, response)
+  await streamRemoteModel(remote, response)
 }
 
 function isAllowedProxyModelUrl(rawUrl) {
@@ -596,12 +602,13 @@ function isAllowedProxyModelUrl(rawUrl) {
   }
 }
 
-function streamRemoteModel(remote, response) {
+async function streamRemoteModel(remote, response) {
   response.writeHead(200, {
     'Content-Type': remote.headers.get('content-type') || 'model/gltf-binary',
     'Cache-Control': 'private, max-age=3600',
   })
-  Readable.fromWeb(remote.body).pipe(response)
+
+  await pipeline(Readable.fromWeb(remote.body), response)
 }
 
 async function tripoRequest(path, options = {}) {
