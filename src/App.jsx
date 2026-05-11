@@ -1,6 +1,6 @@
 import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows, Line, OrbitControls, RoundedBox, useGLTF, useTexture } from '@react-three/drei'
+import { ContactShadows, Line, OrbitControls, RoundedBox, useGLTF } from '@react-three/drei'
 import { motion } from 'framer-motion'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import {
@@ -224,7 +224,7 @@ const GENERATION_PROVIDER_IDS = new Set(GENERATION_PROVIDER_OPTIONS.map((provide
 const GENERATION_MODE_OPTIONS = [
   { id: 'tripo', label: 'Tripo', description: 'Cloud GLB generation.' },
   { id: 'hunyuan', label: 'Hunyuan', description: 'Local Hunyuan3D GLB generation.' },
-  { id: 'cinematic', label: 'Cinematic', description: 'WebGL image-relief volume from the image.' },
+  { id: 'cinematic', label: 'Cinematic', description: 'Layered transparent PNG composition.' },
   { id: 'auto', label: 'Auto', description: 'Tripo, then Hunyuan, then Cinematic fallback.' },
   { id: 'local', label: 'Local GLB', description: 'Import an existing GLB or GLTF file.' },
 ]
@@ -368,12 +368,12 @@ function getCellProfile(cellId, customCells = getStoredCustomCells()) {
     return {
       ...baseProfile,
       summary: isCinematic
-        ? `WebGL image-relief volume from the uploaded image, using ${getCell(customCell.template).name} biology as context.`
+        ? `Layered transparent PNG visual from the uploaded image, using ${getCell(customCell.template).name} biology as context.`
         : hasGeneratedModel
         ? `AI-generated GLB from the uploaded image, using ${getCell(customCell.template).name} biology as context.`
         : `Uploaded image queued for image-to-3D generation; fallback scaffold is ${getCell(customCell.template).name}.`,
       comparison: isCinematic
-        ? 'This custom sample uses WebGL texture displacement and transparent volume slices for depth, not a full AI-generated mesh.'
+        ? 'This custom sample uses transparent PNG layers, CSS 3D depth, and mouse parallax for visual depth, not a full AI-generated mesh.'
         : hasGeneratedModel
         ? 'This custom sample is loaded as a real generated GLB in the WebGL viewer.'
         : `This custom sample will use the ${getCell(customCell.template).name} fallback while generation is running.`,
@@ -462,6 +462,10 @@ function loadImageFromUrl(url) {
 function getCanvasDataUrl(canvas) {
   const webp = canvas.toDataURL('image/webp', 0.9)
   if (webp.startsWith('data:image/webp')) return webp
+  return canvas.toDataURL('image/png')
+}
+
+function getCanvasPngDataUrl(canvas) {
   return canvas.toDataURL('image/png')
 }
 
@@ -600,6 +604,231 @@ async function prepareImageForUpload(file) {
     console.warn(error)
     return { displayUrl: sourceUrl, generationUrl: sourceUrl }
   }
+}
+
+function createTransparentCanvas(width, height) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return canvas
+}
+
+async function createCutoutCanvasFromUrl(sourceUrl, maxEdge = COMPACT_PERSISTED_IMAGE_EDGE) {
+  const image = await loadImageFromUrl(sourceUrl)
+  const sourceWidth = image.naturalWidth || image.width
+  const sourceHeight = image.naturalHeight || image.height
+  const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight))
+  const canvas = createTransparentCanvas(Math.max(1, Math.round(sourceWidth * scale)), Math.max(1, Math.round(sourceHeight * scale)))
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  return removeLightBackground(canvas)
+}
+
+function createDerivedPngLayer(sourceCanvas, derivePixel) {
+  const inputContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+  const source = inputContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+  const outputCanvas = createTransparentCanvas(sourceCanvas.width, sourceCanvas.height)
+  const outputContext = outputCanvas.getContext('2d')
+  const output = outputContext.createImageData(sourceCanvas.width, sourceCanvas.height)
+  const { data } = source
+  const target = output.data
+
+  for (let y = 0; y < sourceCanvas.height; y += 1) {
+    for (let x = 0; x < sourceCanvas.width; x += 1) {
+      const index = (y * sourceCanvas.width + x) * 4
+      const alpha = data[index + 3]
+      if (alpha < 4) continue
+      const pixel = derivePixel(data[index], data[index + 1], data[index + 2], alpha, x, y, sourceCanvas.width, sourceCanvas.height)
+      if (!pixel) continue
+      target[index] = pixel[0]
+      target[index + 1] = pixel[1]
+      target[index + 2] = pixel[2]
+      target[index + 3] = pixel[3]
+    }
+  }
+
+  outputContext.putImageData(output, 0, 0)
+  return getCanvasPngDataUrl(outputCanvas)
+}
+
+function createRimPngLayer(sourceCanvas) {
+  const inputContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+  const source = inputContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+  const outputCanvas = createTransparentCanvas(sourceCanvas.width, sourceCanvas.height)
+  const outputContext = outputCanvas.getContext('2d')
+  const output = outputContext.createImageData(sourceCanvas.width, sourceCanvas.height)
+  const { data } = source
+  const target = output.data
+  const { width, height } = sourceCanvas
+
+  function alphaAt(x, y) {
+    if (x < 0 || x >= width || y < 0 || y >= height) return 0
+    return data[(y * width + x) * 4 + 3]
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4
+      const alpha = data[index + 3]
+      if (alpha < 18) continue
+      const edgeStrength = Math.max(0, alpha - Math.min(alphaAt(x - 2, y), alphaAt(x + 2, y), alphaAt(x, y - 2), alphaAt(x, y + 2)))
+      if (edgeStrength < 18) continue
+      target[index] = 120
+      target[index + 1] = 176
+      target[index + 2] = 210
+      target[index + 3] = Math.min(170, edgeStrength * 1.8)
+    }
+  }
+
+  outputContext.putImageData(output, 0, 0)
+  return getCanvasPngDataUrl(outputCanvas)
+}
+
+function createHighlightPngLayer(sourceCanvas) {
+  const canvas = createTransparentCanvas(sourceCanvas.width, sourceCanvas.height)
+  const context = canvas.getContext('2d')
+  const main = context.createRadialGradient(sourceCanvas.width * 0.34, sourceCanvas.height * 0.24, 0, sourceCanvas.width * 0.34, sourceCanvas.height * 0.24, sourceCanvas.width * 0.34)
+  main.addColorStop(0, 'rgba(255,255,255,0.62)')
+  main.addColorStop(0.34, 'rgba(255,255,255,0.16)')
+  main.addColorStop(1, 'rgba(255,255,255,0)')
+  context.fillStyle = main
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  const secondary = context.createRadialGradient(sourceCanvas.width * 0.68, sourceCanvas.height * 0.66, 0, sourceCanvas.width * 0.68, sourceCanvas.height * 0.66, sourceCanvas.width * 0.28)
+  secondary.addColorStop(0, 'rgba(122,190,214,0.24)')
+  secondary.addColorStop(1, 'rgba(122,190,214,0)')
+  context.fillStyle = secondary
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  context.globalCompositeOperation = 'destination-in'
+  context.drawImage(sourceCanvas, 0, 0)
+  return getCanvasPngDataUrl(canvas)
+}
+
+function createParticlePngLayer(sourceCanvas) {
+  const canvas = createTransparentCanvas(sourceCanvas.width, sourceCanvas.height)
+  const context = canvas.getContext('2d')
+  const colors = ['rgba(132,80,184,0.72)', 'rgba(223,112,70,0.62)', 'rgba(108,164,198,0.66)', 'rgba(125,176,92,0.56)']
+
+  for (let index = 0; index < 34; index += 1) {
+    const x = sourceCanvas.width * (0.16 + seeded(index + 800) * 0.68)
+    const y = sourceCanvas.height * (0.14 + seeded(index + 860) * 0.72)
+    const radius = 2.4 + seeded(index + 920) * 7.5
+    const gradient = context.createRadialGradient(x - radius * 0.28, y - radius * 0.32, 0, x, y, radius)
+    gradient.addColorStop(0, 'rgba(255,255,255,0.82)')
+    gradient.addColorStop(0.38, colors[index % colors.length])
+    gradient.addColorStop(1, 'rgba(255,255,255,0)')
+    context.fillStyle = gradient
+    context.beginPath()
+    context.arc(x, y, radius, 0, Math.PI * 2)
+    context.fill()
+  }
+
+  return getCanvasPngDataUrl(canvas)
+}
+
+async function buildLayeredPngVisual(sourceUrl) {
+  const cutoutCanvas = await createCutoutCanvasFromUrl(sourceUrl)
+  const aspect = cutoutCanvas.width / cutoutCanvas.height
+  const bodyUrl = getCanvasPngDataUrl(cutoutCanvas)
+  const shadowUrl = createDerivedPngLayer(cutoutCanvas, (r, g, b, a) => [42, 55, 62, Math.round(a * 0.34)])
+  const depthUrl = createDerivedPngLayer(cutoutCanvas, (r, g, b, a) => [
+    Math.round(r * 0.72 + 84 * 0.28),
+    Math.round(g * 0.72 + 124 * 0.28),
+    Math.round(b * 0.72 + 148 * 0.28),
+    Math.round(a * 0.52),
+  ])
+  const coreUrl = createDerivedPngLayer(cutoutCanvas, (r, g, b, a, x, y, width, height) => {
+    const nx = (x / width - 0.5) / 0.44
+    const ny = (y / height - 0.48) / 0.4
+    const mask = Math.max(0, 1 - Math.sqrt(nx * nx + ny * ny))
+    if (mask <= 0) return null
+    return [
+      Math.min(255, Math.round(r * 1.08 + 8)),
+      Math.min(255, Math.round(g * 1.04 + 6)),
+      Math.min(255, Math.round(b * 1.12 + 12)),
+      Math.round(a * Math.min(0.9, mask * 1.35)),
+    ]
+  })
+  const frontUrl = createDerivedPngLayer(cutoutCanvas, (r, g, b, a, x, y, width, height) => {
+    const brightness = (r + g + b) / 3
+    const saturation = Math.max(r, g, b) - Math.min(r, g, b)
+    const detail = Math.max(0, Math.min(1, (saturation - 28) / 110 + (brightness - 116) / 260))
+    const upper = Math.max(0, 1 - Math.hypot((x / width - 0.56) / 0.42, (y / height - 0.38) / 0.46))
+    const mask = Math.max(detail * 0.85, upper * 0.52)
+    if (mask <= 0.08) return null
+    return [
+      Math.min(255, Math.round(r * 1.18 + 12)),
+      Math.min(255, Math.round(g * 1.12 + 8)),
+      Math.min(255, Math.round(b * 1.1 + 10)),
+      Math.round(a * Math.min(0.82, mask)),
+    ]
+  })
+
+  return {
+    aspect,
+    layers: [
+      { id: 'shadow', className: 'layer-shadow', url: shadowUrl, z: -130, shiftX: -28, shiftY: -18, scale: 1.1, opacity: 0.92, snapshotX: -18, snapshotY: 20 },
+      { id: 'depth', className: 'layer-depth', url: depthUrl, z: -70, shiftX: -18, shiftY: -10, scale: 1.04, opacity: 0.78, snapshotX: -10, snapshotY: 8 },
+      { id: 'rim', className: 'layer-rim', url: createRimPngLayer(cutoutCanvas), z: -20, shiftX: -8, shiftY: -4, scale: 1.025, opacity: 0.82, snapshotX: -3, snapshotY: 2 },
+      { id: 'body', className: 'layer-body', url: bodyUrl, z: 18, shiftX: 8, shiftY: 5, scale: 1, opacity: 1, snapshotX: 0, snapshotY: 0 },
+      { id: 'core', className: 'layer-core', url: coreUrl, z: 74, shiftX: 22, shiftY: 13, scale: 1.018, opacity: 0.94, snapshotX: 8, snapshotY: -3 },
+      { id: 'front', className: 'layer-front', url: frontUrl, z: 128, shiftX: 34, shiftY: 22, scale: 1.036, opacity: 0.92, snapshotX: 16, snapshotY: -8 },
+      { id: 'particles', className: 'layer-particles', url: createParticlePngLayer(cutoutCanvas), z: 170, shiftX: 46, shiftY: 28, scale: 1.08, opacity: 0.96, snapshotX: 24, snapshotY: -13 },
+      { id: 'highlight', className: 'layer-highlight', url: createHighlightPngLayer(cutoutCanvas), z: 210, shiftX: 54, shiftY: 32, scale: 1.03, opacity: 0.78, snapshotX: 12, snapshotY: -10 },
+    ],
+  }
+}
+
+function canvasToBlob(canvas, type = 'image/png', quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, type, quality)
+  })
+}
+
+async function drawImageToCanvas(context, url, x, y, width, height, opacity = 1, filter = 'none') {
+  const image = await loadImageFromUrl(url)
+  context.save()
+  context.globalAlpha = opacity
+  context.filter = filter
+  context.drawImage(image, x, y, width, height)
+  context.restore()
+}
+
+async function downloadLayeredPngSnapshot(imageUrl, filename) {
+  const visual = await buildLayeredPngVisual(imageUrl)
+  const canvas = createTransparentCanvas(1400, 900)
+  const context = canvas.getContext('2d')
+  const backdrop = context.createLinearGradient(0, 0, canvas.width, canvas.height)
+  backdrop.addColorStop(0, '#fbf5e8')
+  backdrop.addColorStop(1, '#edf6f0')
+  context.fillStyle = backdrop
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  const specimenWidth = visual.aspect >= 1 ? 760 : 760 * visual.aspect
+  const specimenHeight = visual.aspect >= 1 ? 760 / visual.aspect : 760
+  const originX = (canvas.width - specimenWidth) / 2
+  const originY = (canvas.height - specimenHeight) / 2 + 10
+
+  for (const layer of visual.layers) {
+    await drawImageToCanvas(
+      context,
+      layer.url,
+      originX + layer.snapshotX,
+      originY + layer.snapshotY,
+      specimenWidth,
+      specimenHeight,
+      layer.opacity,
+      layer.id === 'shadow' ? 'blur(16px)' : 'none',
+    )
+  }
+
+  const blob = await canvasToBlob(canvas)
+  if (!blob) return false
+  downloadBlob(filename, blob)
+  return true
 }
 
 function delay(ms) {
@@ -1611,129 +1840,83 @@ function GeneratedGlbModel({ modelUrl, proofMode, onSelect }) {
   )
 }
 
-function CinematicReliefModel({ imageUrl, onSelectOrganelle }) {
-  const texture = useTexture(imageUrl)
-  const preparedTexture = useMemo(() => {
-    const cloned = texture.clone()
-    cloned.colorSpace = THREE.SRGBColorSpace
-    cloned.anisotropy = 8
-    cloned.wrapS = THREE.ClampToEdgeWrapping
-    cloned.wrapT = THREE.ClampToEdgeWrapping
-    cloned.needsUpdate = true
-    return cloned
-  }, [texture])
-  const slices = useMemo(() => Array.from({ length: 15 }, (_, index) => {
-    const t = index / 14
-    return {
-      id: index,
-      z: (t - 0.5) * 0.5,
-      scale: 1 + Math.sin(t * Math.PI) * 0.1,
-      opacity: 0.025 + Math.sin(t * Math.PI) * 0.06,
-    }
-  }), [])
-
-  const imageAspect = preparedTexture.image ? preparedTexture.image.width / preparedTexture.image.height : 1
-  const width = imageAspect >= 1 ? 3.35 : 3.35 * imageAspect
-  const height = imageAspect >= 1 ? 3.35 / imageAspect : 3.35
-
-  return (
-    <group
-      rotation={[-0.18, -0.26, 0.02]}
-      onClick={(event) => {
-        event.stopPropagation()
-        onSelectOrganelle('membrane')
-      }}>
-      <mesh position={[0, -0.1, -0.32]} scale={[1.04, 1.04, 1]}>
-        <planeGeometry args={[width, height, 96, 96]} />
-        <meshBasicMaterial map={preparedTexture} transparent opacity={0.18} alphaTest={0.04} depthWrite={false} side={THREE.DoubleSide} />
-      </mesh>
-      {slices.map((slice) => (
-        <mesh key={slice.id} position={[0, 0, slice.z]} scale={[slice.scale, slice.scale, 1]}>
-          <planeGeometry args={[width, height, 112, 112]} />
-          <meshStandardMaterial
-            map={preparedTexture}
-            transparent
-            opacity={slice.opacity}
-            alphaTest={0.045}
-            depthWrite={false}
-            roughness={0.54}
-            metalness={0.02}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
-      <mesh position={[0, 0, 0.34]}>
-        <planeGeometry args={[width, height, 180, 180]} />
-        <meshPhysicalMaterial
-          map={preparedTexture}
-          displacementMap={preparedTexture}
-          displacementScale={0.44}
-          displacementBias={-0.08}
-          transparent
-          alphaTest={0.055}
-          roughness={0.36}
-          metalness={0.02}
-          clearcoat={0.38}
-          clearcoatRoughness={0.46}
-          envMapIntensity={1.1}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh position={[0, 0, 0.64]} scale={[1.01, 1.01, 1]}>
-        <planeGeometry args={[width, height, 96, 96]} />
-        <meshBasicMaterial map={preparedTexture} transparent opacity={0.18} alphaTest={0.12} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
-      </mesh>
-      <Line points={[[-width * 0.38, -height * 0.5, -0.08], [width * 0.34, -height * 0.48, 0.12], [width * 0.44, -height * 0.2, 0.24]]} color="#f3a0bd" lineWidth={2.4} transparent opacity={0.36} />
-    </group>
-  )
-}
-
 function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrganelle, autoRotate }) {
-  const particles = useMemo(() => (
-    Array.from({ length: 26 }, (_, index) => ({
-      id: index,
-      x: 10 + seeded(index + 300) * 80,
-      y: 8 + seeded(index + 360) * 80,
-      size: 3 + seeded(index + 420) * 9,
-      depth: index % 4,
-    }))
-  ), [])
+  const [pointer, setPointer] = useState({ x: 0, y: 0 })
+  const [visualState, setVisualState] = useState(null)
+  const visual = visualState?.imageUrl === imageUrl ? visualState.visual : null
+
+  useEffect(() => {
+    let cancelled = false
+
+    buildLayeredPngVisual(imageUrl)
+      .then((nextVisual) => {
+        if (!cancelled) setVisualState({ imageUrl, visual: nextVisual })
+      })
+      .catch((error) => {
+        console.warn(error)
+        if (!cancelled) {
+          setVisualState({
+            imageUrl,
+            visual: {
+              aspect: 1,
+              layers: [{ id: 'source', className: 'layer-body', url: imageUrl, z: 0, shiftX: 0, shiftY: 0, scale: 1, opacity: 1 }],
+            },
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [imageUrl])
+
+  function handlePointerMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2
+    const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2
+    setPointer({
+      x: Math.max(-1, Math.min(1, x)),
+      y: Math.max(-1, Math.min(1, y)),
+    })
+  }
 
   return (
-    <div className="cinematic-layer-scene">
-      <div className="cinematic-depth-field">
-        {particles.map((particle) => (
-          <span
-            key={particle.id}
-            className={`depth-particle depth-${particle.depth}`}
-            style={{
-              left: `${particle.x}%`,
-              top: `${particle.y}%`,
-              width: `${particle.size}px`,
-              height: `${particle.size}px`,
-            }}
-          />
-        ))}
-      </div>
-      <Canvas
-        camera={{ position: [0, 0.15, 5.1], fov: 36 }}
-        dpr={[1, 1.6]}
-        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
-        onCreated={({ gl }) => {
-          gl.toneMapping = THREE.ACESFilmicToneMapping
-          gl.toneMappingExposure = 1.15
-        }}
+    <div
+      className="cinematic-layer-scene"
+      style={{ '--px': pointer.x.toFixed(3), '--py': pointer.y.toFixed(3) }}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={() => setPointer({ x: 0, y: 0 })}
+      onClick={() => onSelectOrganelle('membrane')}
+    >
+      <div className="cinematic-depth-field" />
+      <div
+        className={`layered-png-stage ${autoRotate ? 'auto' : ''}`}
+        style={{ '--layer-aspect': visual?.aspect || 1 }}
+        aria-label="Layered transparent PNG cell visual"
       >
-        <ambientLight intensity={1.22} />
-        <directionalLight position={[3.2, 3.8, 4.8]} intensity={3.1} color="#fff2df" />
-        <directionalLight position={[-3.6, 1.4, 2.8]} intensity={1.35} color="#d7efff" />
-        <pointLight position={[0.6, -2.4, 2.8]} intensity={1.2} color="#f9a8d4" />
-        <Suspense fallback={null}>
-          <CinematicReliefModel imageUrl={imageUrl} onSelectOrganelle={onSelectOrganelle} />
-        </Suspense>
-        <ContactShadows frames={1} position={[0, -1.45, -0.15]} opacity={0.18} scale={5.4} blur={2.7} far={2.6} color="#8c7564" />
-        <OrbitControls enablePan={false} minDistance={3.6} maxDistance={6.6} enableDamping dampingFactor={0.08} autoRotate={autoRotate} autoRotateSpeed={0.45} />
-      </Canvas>
+        {visual ? (
+          visual.layers.map((layer) => (
+            <img
+              key={layer.id}
+              className={`cinematic-png-layer ${layer.className}`}
+              src={layer.url}
+              alt=""
+              style={{
+                '--z': `${layer.z}px`,
+                '--shift-x': `${layer.shiftX}px`,
+                '--shift-y': `${layer.shiftY}px`,
+                '--scale': layer.scale,
+                '--layer-opacity': layer.opacity,
+              }}
+            />
+          ))
+        ) : (
+          <div className="layered-png-loading">
+            <span />
+            Building PNG layers
+          </div>
+        )}
+      </div>
       <button type="button" className="cinematic-hotspot" style={{ '--label-color': ORGANELLES[selectedOrganelle]?.accent || '#72a4bf' }} onClick={(event) => {
         event.stopPropagation()
         onSelectOrganelle(selectedOrganelle)
@@ -1992,10 +2175,10 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
   const generationPending = cell.custom && !generatedModelUrl && generation?.status && !['failed', 'local'].includes(generation.status)
   const generationFailed = cell.custom && !generatedModelUrl && generation?.status === 'failed'
   const stageStatusText = isCinematicCell
-    ? `WebGL image-relief volume · ${autoRotate ? 'Auto rotate' : 'Manual orbit'} · ${viewMode}`
+    ? `Layered PNG composition · ${autoRotate ? 'Auto drift' : 'Mouse parallax'} · ${viewMode}`
     : `${generatedModelUrl ? `${generationProviderLabel} GLB loaded` : generationFailed ? `${generationProviderLabel} failed; source image shown` : referenceImageUrl ? `${generationProviderLabel} ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · ${autoRotate || proofMode ? 'Auto rotate' : 'Manual orbit'} · ${viewMode}`
   const referenceLabel = isCinematicCell
-    ? 'Source image used for WebGL relief volume'
+    ? 'Source image used for layered PNG composition'
     : generatedModelUrl
     ? `Source image used for ${generationProviderLabel} 3D generation`
     : `Source image for ${generationProviderLabel} generation`
@@ -2051,8 +2234,10 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
     onNotify(next ? '3D proof mode: axes, grid, exploded meshes' : '3D proof mode off')
   }
 
-  function handleScreenshot() {
-    const ok = downloadCanvasImage(`${selectedCell}-${selectedOrganelle}.png`)
+  async function handleScreenshot() {
+    const ok = isCinematicCell && referenceImageUrl
+      ? await downloadLayeredPngSnapshot(referenceImageUrl, `${selectedCell}-${selectedOrganelle}.png`)
+      : downloadCanvasImage(`${selectedCell}-${selectedOrganelle}.png`)
     setCapturePulse(true)
     window.setTimeout(() => setCapturePulse(false), 280)
     onNotify(ok ? 'Screenshot downloaded' : 'Screenshot unavailable in this browser')
@@ -2142,8 +2327,8 @@ function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, cr
       </button>
       {proofMode && (
         <div className="proof-badge">
-          <strong>{isCinematicCell ? 'WEBGL RELIEF 3D' : 'LIVE WEBGL 3D'}</strong>
-          <span>{isCinematicCell ? 'Texture displacement · transparent volume slices · OrbitControls' : generatedModelUrl ? `${generationProviderLabel} GLB · OrbitControls · GLB export` : referenceImageUrl ? `${generationProviderLabel} task pending · fallback 3D scaffold` : 'Exploded meshes · XYZ axes · GLB export'}</span>
+          <strong>{isCinematicCell ? 'LAYERED PNG DEPTH' : 'LIVE WEBGL 3D'}</strong>
+          <span>{isCinematicCell ? 'Transparent PNG layers · CSS 3D depth · mouse parallax' : generatedModelUrl ? `${generationProviderLabel} GLB · OrbitControls · GLB export` : referenceImageUrl ? `${generationProviderLabel} task pending · fallback 3D scaffold` : 'Exploded meshes · XYZ axes · GLB export'}</span>
         </div>
       )}
       {labelVisible && (
@@ -2825,10 +3010,10 @@ function App() {
             status: 'local',
             modelUrl: '',
             rawModelUrl: '',
-            message: 'Cinematic WebGL relief volume is ready.',
+            message: 'Cinematic layered PNG visual is ready.',
           },
         }))
-        setToast(`${customCell.name} relief volume ready`)
+        setToast(`${customCell.name} layered PNG visual ready`)
         return
       }
 
@@ -2966,7 +3151,7 @@ function App() {
         provider: requestedMode,
         requestedProvider: requestedMode,
         status: 'uploading',
-        message: requestedMode === 'cinematic' ? 'Building WebGL relief volume.' : 'Sending image to backend.',
+        message: requestedMode === 'cinematic' ? 'Building transparent PNG layers.' : 'Sending image to backend.',
       }
       const nextCustomCells = [customCell, ...customCells].slice(0, 8)
 
