@@ -66,7 +66,10 @@ export async function importLocalModel(request, url) {
 }
 
 export async function cacheRemoteModel(taskId, rawModelUrl) {
-  const ext = getModelExtension(rawModelUrl)
+  return cacheRemoteModelAs(taskId, rawModelUrl, getModelExtension(rawModelUrl))
+}
+
+export async function cacheRemoteModelAs(taskId, rawModelUrl, ext = 'glb') {
   if (await hasLocalModel(taskId, ext)) return localModelUrl(taskId, ext)
 
   await mkdir(LOCAL_MODEL_DIR, { recursive: true })

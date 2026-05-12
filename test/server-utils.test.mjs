@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { parseDataUrl, sanitizeFileName } from '../server/http-utils.mjs'
 import { getModelExtension, shouldAttachTripoAuth, validateModelBuffer } from '../server/model-store.mjs'
 import { findFirstValue, findModelUrl, isSuccessStatus } from '../server/object-utils.mjs'
+import { decodeRodinTaskId, encodeRodinTaskId, findRodinDownloadItem, normalizeRodinStatus } from '../server/providers/rodin.mjs'
 
 describe('server utility functions', () => {
   it('sanitizes uploaded filenames without losing readable words', () => {
@@ -52,5 +53,26 @@ describe('server utility functions', () => {
     assert.equal(findModelUrl({ result: 'https://example.com/model.obj' }), '')
     assert.equal(isSuccessStatus('finished'), true)
     assert.equal(isSuccessStatus('running'), false)
+  })
+
+  it('normalizes Rodin task ids, statuses, and downloads', () => {
+    const task = { taskUuid: 'task-uuid-1', subscriptionKey: 'subscription-key-1' }
+    const encoded = encodeRodinTaskId(task)
+
+    assert.deepEqual(decodeRodinTaskId(encoded), task)
+    assert.deepEqual(decodeRodinTaskId('legacy-task-id'), { taskUuid: 'legacy-task-id', subscriptionKey: 'legacy-task-id' })
+    assert.equal(normalizeRodinStatus(['Done', 'Done']), 'success')
+    assert.equal(normalizeRodinStatus(['Waiting']), 'queued')
+    assert.equal(normalizeRodinStatus(['Generating']), 'running')
+    assert.equal(normalizeRodinStatus(['Done', 'Failed']), 'failed')
+    assert.deepEqual(
+      findRodinDownloadItem({
+        list: [
+          { name: 'preview.webp', url: 'https://example.com/preview.webp' },
+          { name: 'model.glb', url: 'https://cdn.example.com/signed-download' },
+        ],
+      }),
+      { name: 'model.glb', url: 'https://cdn.example.com/signed-download' },
+    )
   })
 })

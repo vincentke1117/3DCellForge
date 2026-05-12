@@ -18,16 +18,18 @@ export const MODEL_API_BASE = import.meta.env.VITE_MODEL_API_BASE || import.meta
 export const GENERATION_POLL_INTERVAL_MS = 3500
 export const GENERATION_TIMEOUT_MS = 8 * 60 * 1000
 export const GENERATION_PROVIDER_OPTIONS = [
-  { id: 'auto', label: 'Auto', description: 'Tripo first, Hunyuan backup.' },
+  { id: 'auto', label: 'Auto', description: 'Tripo first, Rodin and Hunyuan backup.' },
   { id: 'tripo', label: 'Tripo', description: 'Cloud generation.' },
+  { id: 'rodin', label: 'Rodin', description: 'Hyper3D Rodin cloud generation.' },
   { id: 'hunyuan', label: 'Hunyuan', description: 'Local Hunyuan3D server.' },
 ]
 export const GENERATION_PROVIDER_IDS = new Set(GENERATION_PROVIDER_OPTIONS.map((provider) => provider.id))
 export const GENERATION_MODE_OPTIONS = [
   { id: 'tripo', label: 'Tripo', description: 'Cloud GLB generation.' },
+  { id: 'rodin', label: 'Rodin', description: 'Hyper3D Rodin GLB generation.' },
   { id: 'hunyuan', label: 'Hunyuan', description: 'Local Hunyuan3D GLB generation.' },
   { id: 'cinematic', label: 'JS Depth', description: 'Browser-side image relief with layered PNG fallback.' },
-  { id: 'auto', label: 'Auto', description: 'Tripo, then Hunyuan, then JS Depth fallback.' },
+  { id: 'auto', label: 'Auto', description: 'Tripo, Rodin, Hunyuan, then JS Depth fallback.' },
   { id: 'local', label: 'Local GLB', description: 'Import an existing GLB or GLTF file.' },
 ]
 export const GENERATION_MODE_IDS = new Set(GENERATION_MODE_OPTIONS.map((mode) => mode.id))

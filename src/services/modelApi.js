@@ -27,7 +27,7 @@ export async function readApiResponse(response) {
 }
 
 export function getProviderPlan(provider) {
-  return provider === 'auto' ? ['tripo', 'hunyuan', 'cinematic'] : [provider || 'tripo']
+  return provider === 'auto' ? ['tripo', 'rodin', 'hunyuan', 'cinematic'] : [provider || 'tripo']
 }
 
 export function getProviderLabel(provider) {

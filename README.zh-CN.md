@@ -56,6 +56,7 @@ cp .env.example .env.local
 
 ```bash
 TRIPO_API_KEY=your_tripo_key
+RODIN_API_KEY=your_rodin_api_key
 API_HOST=127.0.0.1
 ```
 
@@ -70,22 +71,25 @@ HUNYUAN_STATUS_PATH=/status
 3D 生成后端支持这些路径：
 
 ```text
-Tripo   只走云端生成，默认模式
-Auto    先 Tripo，失败后 Hunyuan
+Tripo   只走 Tripo 云端生成，默认模式
+Rodin   只走 Hyper3D Rodin 云端生成
+Auto    先 Tripo，再 Rodin，最后 Hunyuan 备用
 Hunyuan 只走本地 Hunyuan3D
 ```
 
 上传面板支持这些模式：
 
 ```text
-Tripo       云端 GLB 生成
+Tripo       Tripo 云端 GLB 生成
+Rodin       Hyper3D Rodin GLB 生成
 Hunyuan     本地 Hunyuan3D GLB 生成
 JS Depth    浏览器侧图片深度浮雕，WebGL 不可用时降级到透明 PNG 分层
-Auto        Tripo -> Hunyuan -> JS Depth 依次降级
+Auto        Tripo -> Rodin -> Hunyuan -> JS Depth 依次降级
 Local GLB   导入已有 .glb 或自包含 .gltf
 ```
 
 Tripo 上传使用当前 STS 对象存储流程，然后创建 `image_to_model` 任务。生成后的 GLB 会被 Node 后端缓存到 `.generated-models/`，后续展示优先使用本地副本。
+Rodin 上传使用 Hyper3D 的 multipart `/rodin` 任务接口，然后轮询 `/status` 并通过 `/download` 下载和缓存 GLB。
 
 也可以从 Microscope View 的 Add Image 入口导入本地 `.glb` 或自包含 `.gltf`，导入后会成为自定义 Cell Type。
 

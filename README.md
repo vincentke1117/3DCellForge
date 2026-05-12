@@ -55,6 +55,7 @@ Then set:
 
 ```bash
 TRIPO_API_KEY=your_tripo_key
+RODIN_API_KEY=your_rodin_api_key
 API_HOST=127.0.0.1
 ```
 
@@ -69,22 +70,25 @@ HUNYUAN_STATUS_PATH=/status
 The 3D generation backend supports these provider paths:
 
 ```text
-Tripo   Cloud generation only (default)
-Auto    Tripo first, Hunyuan backup
+Tripo   Tripo cloud generation only (default)
+Rodin   Hyper3D Rodin cloud generation only
+Auto    Tripo first, then Rodin and Hunyuan backup
 Hunyuan Local Hunyuan3D generation only
 ```
 
 The upload panel exposes the full generation mode choice before picking a file:
 
 ```text
-Tripo       Cloud GLB generation
+Tripo       Tripo cloud GLB generation
+Rodin       Hyper3D Rodin GLB generation
 Hunyuan     Local Hunyuan3D GLB generation
 JS Depth    Browser-side image relief with layered PNG fallback
-Auto        Tripo, then Hunyuan, then JS Depth fallback
+Auto        Tripo, Rodin, Hunyuan, then JS Depth fallback
 Local GLB   Import an existing .glb or self-contained .gltf
 ```
 
 Tripo uploads use the current STS object-storage flow (`/upload/sts/token`) before creating an `image_to_model` task.
+Rodin uploads use Hyper3D's multipart `/rodin` task API, then poll `/status` and cache the GLB returned by `/download`.
 Generated GLBs are cached by the Node backend under `.generated-models/`, so later views use the local copy instead of the temporary Tripo URL.
 
 You can also import a local `.glb` or self-contained `.gltf` from the Microscope View add button. Imported models become custom Cell Types and are served from the same local cache.
