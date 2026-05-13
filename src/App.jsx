@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
+import { Info, X } from 'lucide-react'
 import {
   CUSTOM_CELL_STORAGE_KEY,
   DEFAULT_SETTINGS,
@@ -43,9 +44,9 @@ function App() {
   const [selectedOrganelle, setSelectedOrganelle] = useState(() => initialUiStateRef.current.selectedOrganelle)
   const [crossSection, setCrossSection] = useState(() => initialUiStateRef.current.crossSection)
   const [activePanel, setActivePanel] = useState(null)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
   const [toast, setToast] = useState('Plant cell ready')
   const [favoriteKey, setFavoriteKey] = useState(() => initialUiStateRef.current.favoriteKey)
-  const [labelVisible, setLabelVisible] = useState(() => loadStoredValue('bio-demo-label-visible', true))
   const [selectedMicroscope, setSelectedMicroscope] = useState(() => initialUiStateRef.current.selectedMicroscope)
   const [uploadedImage, setUploadedImage] = useState(() => getUploadPreviewFromCustomCells(initialCustomCellsRef.current))
   const [sceneExporter, setSceneExporter] = useState(null)
@@ -68,10 +69,6 @@ function App() {
   }, [settings])
 
   useEffect(() => {
-    storeValue('bio-demo-label-visible', labelVisible)
-  }, [labelVisible])
-
-  useEffect(() => {
     storeValue(CUSTOM_CELL_STORAGE_KEY, customCells)
   }, [customCells])
 
@@ -86,6 +83,10 @@ function App() {
       uiStateVersion: UI_STATE_STORAGE_VERSION,
     })
   }, [compareCell, crossSection, favoriteKey, selectedCell, selectedMicroscope, selectedOrganelle])
+
+  useEffect(() => {
+    if (activePanel) setInspectorOpen(false)
+  }, [activePanel])
 
   useEffect(() => {
     if (!uploadedImage) setUploadedImage(getUploadPreviewFromCustomCells(customCells))
@@ -109,9 +110,21 @@ function App() {
     const nextCell = getCell(cellId, customCells)
     setSelectedCell(cellId)
     setSelectedOrganelle(getDefaultOrganelle(cellId, customCells))
+    setInspectorOpen(false)
     setCompareCell((current) => (current === cellId ? getCellProfile(cellId, customCells).compareTarget : current))
     if (nextCell.custom) setUploadedImage({ name: nextCell.name, url: nextCell.imageUrl || '' })
     setToast(`${nextCell.name} loaded`)
+  }
+
+  function handleStageOrganelleSelect(organelleId) {
+    setSelectedOrganelle(organelleId)
+    setActivePanel(null)
+    setInspectorOpen(true)
+  }
+
+  function openInspector() {
+    setActivePanel(null)
+    setInspectorOpen(true)
   }
 
   async function handleExport() {
@@ -439,7 +452,7 @@ function App() {
 
   return (
     <main className={settings.compactUi ? 'studio-shell compact-ui' : 'studio-shell'}>
-      <motion.div className="studio-window" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.38 }}>
+      <motion.div className="studio-window workbench-v2" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.38 }}>
         <StudioHeader activePanel={activePanel} setActivePanel={setActivePanel} onNotify={setToast} />
         <WorkspaceDrawer
           activePanel={activePanel}
@@ -451,7 +464,6 @@ function App() {
           galleryItems={galleryItems}
           notes={notes}
           settings={settings}
-          labelVisible={labelVisible}
           crossSection={crossSection}
           selectedMicroscope={selectedMicroscope}
           uploadedImage={uploadedImage}
@@ -467,57 +479,84 @@ function App() {
           onClearGallery={handleClearGallery}
           onUpdateNote={handleUpdateNote}
           onUpdateSettings={setSettings}
-          onSetLabelVisible={setLabelVisible}
           onSetCrossSection={setCrossSection}
           onExport={handleExport}
           onNotify={setToast}
         />
         <StatusToast message={toast} />
-        <div className="studio-grid">
-          <LeftSidebar
-            selectedCell={selectedCell}
-            setSelectedCell={handleSelectCell}
-            selectedOrganelle={selectedOrganelle}
-            setSelectedOrganelle={setSelectedOrganelle}
-            customCells={customCells}
-          />
-          <CenterStage
-            selectedCell={selectedCell}
-            selectedOrganelle={selectedOrganelle}
-            setSelectedOrganelle={setSelectedOrganelle}
-            crossSection={crossSection}
-            setCrossSection={setCrossSection}
-            labelVisible={labelVisible}
-            renderQuality={settings.quality}
-            customCells={customCells}
-            onNotify={setToast}
-            onExport={handleExport}
-            onExporterReady={setSceneExporter}
-            onRetryGeneration={handleRetryGeneration}
-          />
-          <DetailPanel
-            selectedCell={selectedCell}
-            selectedOrganelle={selectedOrganelle}
-            favoriteKey={favoriteKey}
-            setFavoriteKey={setFavoriteKey}
-            labelVisible={labelVisible}
-            setLabelVisible={setLabelVisible}
-            customCells={customCells}
-            onNotify={setToast}
-          />
-          <BottomDeck
-            selectedCell={selectedCell}
-            selectedMicroscope={selectedMicroscope}
-            setSelectedMicroscope={setSelectedMicroscope}
-            uploadedImage={uploadedImage}
-            generationMode={settings.generationMode}
-            onGenerationModeChange={(generationMode) => setSettings((current) => ({ ...current, generationMode }))}
-            onUploadImage={handleUploadImage}
-            compareCell={compareCell}
-            customCells={customCells}
-            onCompare={handleOpenCompare}
-            onNotify={setToast}
-          />
+        <div className="studio-workbench-v2">
+          <div className="stage-zone">
+            <CenterStage
+              selectedCell={selectedCell}
+              selectedOrganelle={selectedOrganelle}
+              setSelectedOrganelle={handleStageOrganelleSelect}
+              crossSection={crossSection}
+              setCrossSection={setCrossSection}
+              renderQuality={settings.quality}
+              customCells={customCells}
+              onNotify={setToast}
+              onExport={handleExport}
+              onExporterReady={setSceneExporter}
+              onRetryGeneration={handleRetryGeneration}
+              onOpenInspector={openInspector}
+            />
+          </div>
+
+          <div className="selection-shelf">
+            <LeftSidebar
+              selectedCell={selectedCell}
+              setSelectedCell={handleSelectCell}
+              selectedOrganelle={selectedOrganelle}
+              setSelectedOrganelle={setSelectedOrganelle}
+              customCells={customCells}
+            />
+          </div>
+
+          <button
+            type="button"
+            className={inspectorOpen ? 'inspector-trigger active' : 'inspector-trigger'}
+            onClick={openInspector}
+            aria-expanded={inspectorOpen}
+          >
+            <Info size={16} />
+            Info
+          </button>
+
+          {inspectorOpen && (
+            <>
+              <button type="button" className="inspector-scrim" aria-label="Close inspector" onClick={() => setInspectorOpen(false)} />
+              <div className="inspector-zone open">
+                <button type="button" className="inspector-close" onClick={() => setInspectorOpen(false)}>
+                  <X size={15} />
+                  Close
+                </button>
+                <DetailPanel
+                  selectedCell={selectedCell}
+                  selectedOrganelle={selectedOrganelle}
+                  favoriteKey={favoriteKey}
+                  setFavoriteKey={setFavoriteKey}
+                  customCells={customCells}
+                  onNotify={setToast}
+                />
+              </div>
+            </>
+          )}
+
+          <div className="command-zone">
+            <BottomDeck
+              selectedCell={selectedCell}
+              selectedMicroscope={selectedMicroscope}
+              setSelectedMicroscope={setSelectedMicroscope}
+              uploadedImage={uploadedImage}
+              generationMode={settings.generationMode}
+              onGenerationModeChange={(generationMode) => setSettings((current) => ({ ...current, generationMode }))}
+              onUploadImage={handleUploadImage}
+              compareCell={compareCell}
+              customCells={customCells}
+              onCompare={handleOpenCompare}
+              onNotify={setToast}
+            />
+          </div>
         </div>
       </motion.div>
     </main>

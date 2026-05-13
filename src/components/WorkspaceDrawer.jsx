@@ -19,7 +19,6 @@ export function WorkspaceDrawer({
   galleryItems,
   notes,
   settings,
-  labelVisible,
   crossSection,
   selectedMicroscope,
   uploadedImage,
@@ -32,7 +31,6 @@ export function WorkspaceDrawer({
   onClearGallery,
   onUpdateNote,
   onUpdateSettings,
-  onSetLabelVisible,
   onSetCrossSection,
   onExport,
   onNotify,
@@ -177,13 +175,6 @@ export function WorkspaceDrawer({
     if (activePanel === 'Settings') {
       return (
         <div className="drawer-content settings-list">
-          <label className="settings-row">
-            <span>
-              <strong>Organelle Labels</strong>
-              <small>Show the floating label on the stage.</small>
-            </span>
-            <input type="checkbox" checked={labelVisible} onChange={(event) => onSetLabelVisible(event.target.checked)} />
-          </label>
           <label className="settings-row">
             <span>
               <strong>Cross-Section</strong>

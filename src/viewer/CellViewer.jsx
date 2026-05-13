@@ -964,7 +964,7 @@ export function CellScene({ selectedCell, modelCellId, referenceImageUrl, genera
 
   return (
     <Canvas
-      camera={{ position: [0, 0.1, 5.25], fov: 35 }}
+      camera={{ position: [0, 0.1, 6.05], fov: 35 }}
       shadows
       dpr={dpr}
       gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}

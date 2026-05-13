@@ -42,7 +42,7 @@ function ViewerControls({ crossSection, setCrossSection, viewMode, setViewMode }
   )
 }
 
-export function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, crossSection, setCrossSection, labelVisible, renderQuality, customCells, onNotify, onExport, onExporterReady, onRetryGeneration }) {
+export function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrganelle, crossSection, setCrossSection, renderQuality, customCells, onNotify, onExport, onExporterReady, onRetryGeneration, onOpenInspector }) {
   const [viewMode, setViewMode] = useState('layers')
   const [autoRotate, setAutoRotate] = useState(false)
   const [isIsolated, setIsIsolated] = useState(false)
@@ -119,8 +119,9 @@ export function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrgane
       setViewMode('focus')
       setHideOthers(false)
       setAutoRotate(true)
+      onOpenInspector?.()
     }
-    onNotify(next ? '3D proof mode: axes, grid, exploded meshes' : '3D proof mode off')
+    onNotify(next ? 'Inspection mode enabled' : 'Inspection mode off')
   }
 
   async function handleScreenshot() {
@@ -210,22 +211,6 @@ export function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrgane
           {cell.custom && !cell.reference && cell.imageUrl && <button type="button" onClick={() => onRetryGeneration?.(cell.id)}>Retry Generation</button>}
         </div>
       )}
-      <button type="button" className={proofMode ? 'proof-launcher active' : 'proof-launcher'} onClick={handleProofMode} aria-pressed={proofMode}>
-        <Box size={15} />
-        3D Proof
-      </button>
-      {proofMode && (
-        <div className="proof-badge">
-          <strong>{isCinematicCell ? 'JS IMAGE RELIEF' : 'LIVE WEBGL 3D'}</strong>
-          <span>{isCinematicCell ? 'Texture displacement · transparent depth slabs · OrbitControls' : generatedModelUrl ? `${generationProviderLabel} GLB · OrbitControls · GLB export` : referenceImageUrl ? `${generationProviderLabel} task pending · fallback 3D scaffold` : 'Exploded meshes · XYZ axes · GLB export'}</span>
-        </div>
-      )}
-      {labelVisible && (
-        <button type="button" className="stage-label" style={{ '--label-color': detail.accent }} onClick={() => setSelectedOrganelle(selectedOrganelle)}>
-          <span />
-          {detail.title}
-        </button>
-      )}
       <div className="stage-status">
         {stageStatusText}
       </div>
@@ -249,7 +234,7 @@ export function CenterStage({ selectedCell, selectedOrganelle, setSelectedOrgane
         </button>
         <button type="button" className={proofMode ? 'active proof-active' : ''} onClick={handleProofMode} aria-pressed={proofMode}>
           <Box size={14} />
-          3D Proof
+          Inspect
         </button>
         <span />
         <button type="button" onClick={handleScreenshot}>

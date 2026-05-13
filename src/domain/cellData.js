@@ -181,7 +181,7 @@ export const WORKSPACE_PANELS = {
   Gallery: 'Saved render angles, microscope snapshots, and exported study plates.',
   Library: 'Reference structures for cell walls, membranes, nuclei, lysosomes, and mitochondria.',
   Notebooks: 'Observation notes linked to the selected cell and organelle.',
-  Settings: 'Viewer quality, labels, cross-section defaults, and export preferences.',
+  Settings: 'Viewer quality, cross-section defaults, and export preferences.',
   Compare: 'Side-by-side cell comparison for visual structure and biological role.',
   Profile: 'Current workspace: Bio Visualization Prototype.',
 }

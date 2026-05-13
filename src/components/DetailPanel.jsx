@@ -2,7 +2,7 @@ import { Heart } from 'lucide-react'
 
 import { getOrganelleDetail } from '../domain/cellCatalog.js'
 
-export function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setFavoriteKey, labelVisible, setLabelVisible, customCells, onNotify }) {
+export function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setFavoriteKey, customCells, onNotify }) {
   const detail = getOrganelleDetail(selectedCell, selectedOrganelle, customCells)
   const currentKey = `${selectedCell}:${selectedOrganelle}`
   const isFavorite = favoriteKey === currentKey
@@ -11,12 +11,6 @@ export function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setF
     const next = isFavorite ? '' : currentKey
     setFavoriteKey(next)
     onNotify(isFavorite ? `${detail.title} removed from favorites` : `${detail.title} saved to favorites`)
-  }
-
-  function toggleLabel() {
-    const next = !labelVisible
-    setLabelVisible(next)
-    onNotify(next ? 'Stage label visible' : 'Stage label hidden')
   }
 
   return (
@@ -54,9 +48,8 @@ export function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setF
             <dd>{detail.visible}</dd>
           </div>
           <div>
-            <dt>Label</dt>
+            <dt>Marker</dt>
             <dd>
-              <button type="button" className={labelVisible ? 'mini-toggle active' : 'mini-toggle'} onClick={toggleLabel} aria-pressed={labelVisible} aria-label="Toggle label" />
               <span className="color-dot" style={{ background: detail.accent }} />
             </dd>
           </div>
@@ -69,19 +62,6 @@ export function DetailPanel({ selectedCell, selectedOrganelle, favoriteKey, setF
         </header>
         <p>{detail.note}</p>
         <blockquote>{detail.funFact ?? 'Some white blood cells can change shape to squeeze between blood vessel walls and reach infected tissue.'}</blockquote>
-      </section>
-
-      <section className="panel occurs-panel">
-        <header className="panel-title">
-          <span>Where It Occurs</span>
-        </header>
-        <div className="body-map">
-          <div className="body-line" />
-          <div className="body-figure" />
-          <div className="target-cell">
-            <span />
-          </div>
-        </div>
       </section>
     </aside>
   )
