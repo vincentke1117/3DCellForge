@@ -5,6 +5,7 @@ import { getModelExtension, shouldAttachTripoAuth, validateModelBuffer } from '.
 import { findFirstValue, findModelUrl, isSuccessStatus } from '../server/object-utils.mjs'
 import { buildFalInput, decodeFalTaskId, encodeFalTaskId, findFalModelFile, normalizeFalModelId, normalizeFalStatus } from '../server/providers/fal.mjs'
 import { decodeRodinTaskId, encodeRodinTaskId, findRodinDownloadItem, normalizeRodinStatus } from '../server/providers/rodin.mjs'
+import { extractJsonObject, normalizeVisionInsight } from '../server/providers/vision.mjs'
 import { compactCustomCellsForStorage, persistCustomCells } from '../src/domain/cellPersistence.js'
 
 describe('server utility functions', () => {
@@ -81,6 +82,17 @@ describe('server utility functions', () => {
     assert.equal(findModelUrl({ result: 'https://example.com/model.obj' }), '')
     assert.equal(isSuccessStatus('finished'), true)
     assert.equal(isSuccessStatus('running'), false)
+  })
+
+  it('normalizes model vision output for asset intelligence', () => {
+    const parsed = extractJsonObject('```json\n{"objectName":"Red Supercar","categoryId":"car","confidence":92,"tags":["Vehicle","Gloss"]}\n```')
+    const insight = normalizeVisionInsight(parsed, { provider: 'openai', model: 'test-model' })
+
+    assert.equal(insight.objectName, 'Red Supercar')
+    assert.equal(insight.categoryId, 'road')
+    assert.equal(insight.categoryLabel, 'Performance Vehicle')
+    assert.equal(insight.confidence, 0.92)
+    assert.deepEqual(insight.tags, ['vehicle', 'gloss'])
   })
 
   it('normalizes Rodin task ids, statuses, and downloads', () => {

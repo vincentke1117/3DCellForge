@@ -7,6 +7,7 @@ import { createFalTask, getFalHealth, getFalTask } from './server/providers/fal.
 import { createHunyuanTask, getHunyuanHealth, getHunyuanTask } from './server/providers/hunyuan.mjs'
 import { createRodinTask, getRodinHealth, getRodinTask } from './server/providers/rodin.mjs'
 import { createTripoTask, getTripoHealth, getTripoTask } from './server/providers/tripo.mjs'
+import { analyzeAssetImage, getVisionHealth } from './server/providers/vision.mjs'
 
 const DEFAULT_GENERATION_PROVIDER = 'rodin'
 
@@ -41,6 +42,7 @@ const server = http.createServer(async (request, response) => {
           rodin: getRodinHealth(),
           hunyuan: getHunyuanHealth(),
           fal: getFalHealth(),
+          vision: getVisionHealth(),
         },
       }
       sendJson(response, 200, payload)
@@ -53,6 +55,26 @@ const server = http.createServer(async (request, response) => {
       const payload = await readRecentLogs(url.searchParams.get('limit') || 100)
       sendJson(response, 200, payload)
       await logEvent('info', 'http.response', { requestId, path: url.pathname, status: 200, durationMs: Date.now() - startedAt, entries: payload.entries.length })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/3d/analyze') {
+      const payload = await readJsonBody(request)
+      await logEvent('info', 'asset.analyze.start', {
+        requestId,
+        payload: summarizePayload(payload),
+      })
+      const insight = await analyzeAssetImage(payload)
+
+      sendJson(response, 200, insight)
+      await logEvent('info', 'asset.analyze.success', {
+        requestId,
+        provider: insight.provider,
+        configured: insight.configured,
+        status: insight.status,
+        categoryId: insight.categoryId,
+        durationMs: Date.now() - startedAt,
+      })
       return
     }
 
@@ -156,6 +178,7 @@ server.listen(API_PORT, API_HOST, () => {
   console.log(TRIPO_API_KEY ? 'Tripo API key loaded from environment.' : 'TRIPO_API_KEY is missing. Add it to .env.local.')
   console.log(RODIN_API_KEY ? 'Rodin API key loaded from environment.' : 'RODIN_API_KEY is missing. Add it to .env.local.')
   console.log(FAL_API_KEY ? 'Fal API key loaded from environment.' : 'FAL_API_KEY is missing. Add it to .env.local.')
+  console.log(getVisionHealth().configured ? 'Vision analysis provider configured.' : 'Vision analysis is not configured. Add OPENAI_API_KEY to .env.local.')
   console.log(`Hunyuan3D local provider: ${HUNYUAN_API_BASE}`)
   logEvent('info', 'api.start', {
     host: API_HOST,
@@ -165,6 +188,7 @@ server.listen(API_PORT, API_HOST, () => {
       rodin: Boolean(RODIN_API_KEY),
       fal: Boolean(FAL_API_KEY),
       hunyuan: Boolean(HUNYUAN_API_BASE),
+      vision: getVisionHealth().configured,
     },
   })
 })

@@ -90,8 +90,11 @@ cp .env.example .env.local
 TRIPO_API_KEY=your_tripo_key
 FAL_API_KEY=your_fal_key
 RODIN_API_KEY=your_rodin_api_key
+OPENAI_API_KEY=your_openai_key
 API_HOST=127.0.0.1
 ```
+
+`OPENAI_API_KEY` 会启用可选的图片理解接口 `/api/3d/analyze`。配置后，上传图片会先被视觉模型识别为资产类型、材质重点、检查重点、展示场景、标签，并生成更适合 image-to-3D 的提示词。没配置时，应用继续使用本地文件名和元数据规则，不会影响基础上传和生成。
 
 如需启用 Hunyuan3D 本地备用模式，先启动你的 Hunyuan3D API 服务，再设置：
 

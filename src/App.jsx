@@ -31,7 +31,7 @@ import { createImageThumbnailDataUrl, prepareImageForUpload } from './lib/imageP
 import { listStoredModels, saveStoredModels } from './lib/modelStore.js'
 import { deleteProject, listProjects, loadProject, saveProject } from './lib/projectStore.js'
 import { loadStoredValue, storeValue } from './lib/storage.js'
-import { create3dGeneration, get3dApiHealth, get3dServerLogs, getProviderLabel, getProviderPlan, uploadLocal3dModel, waitFor3dModel } from './services/modelApi.js'
+import { analyzeAssetImage, create3dGeneration, get3dApiHealth, get3dServerLogs, getProviderLabel, getProviderPlan, uploadLocal3dModel, waitFor3dModel } from './services/modelApi.js'
 import { BottomDeck } from './components/BottomDeck.jsx'
 import { CenterStage } from './components/CenterStage.jsx'
 import { DetailPanel } from './components/DetailPanel.jsx'
@@ -76,8 +76,30 @@ function mergeCustomModelRecord(existing, next) {
       taskId: existingGeneration.taskId || nextGeneration.taskId || '',
     },
     thumbnailUrl: existing.thumbnailUrl || next.thumbnailUrl || '',
+    intelligence: existing.intelligence || next.intelligence,
+    motionProfile: existing.motionProfile || next.motionProfile,
     savedAt: existing.savedAt || next.savedAt,
     updatedAt: existing.updatedAt || next.updatedAt,
+  }
+}
+
+function applyAssetInsightToCell(cell, insight) {
+  if (!insight?.configured || insight.status !== 'success') return cell
+
+  const objectName = String(insight.objectName || '').trim()
+  const displayName = objectName || cell.fullName || cell.name
+
+  return {
+    ...cell,
+    name: displayName.length > 24 ? `${displayName.slice(0, 24)}...` : displayName,
+    fullName: displayName,
+    type: insight.categoryLabel || cell.type,
+    motionProfile: insight.categoryId || cell.motionProfile,
+    intelligence: insight,
+    generation: {
+      ...cell.generation,
+      message: cell.generation?.message || 'Image analyzed; waiting for generation.',
+    },
   }
 }
 
@@ -336,6 +358,17 @@ function App() {
     })
   }
 
+  async function analyzeUploadedAsset(imageDataUrl, fileName) {
+    try {
+      const insight = await analyzeAssetImage({ imageDataUrl, fileName })
+      if (!insight?.configured) return null
+      return insight
+    } catch (error) {
+      console.warn(error)
+      return null
+    }
+  }
+
   function addGenerationHistory(entry) {
     const nextEntry = {
       id: entry.id || `history-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -565,12 +598,14 @@ function App() {
       if (settings.generationMode === 'local') setToast('Local GLB mode needs a model file; using JS Depth')
       const { displayUrl, generationUrl } = await prepareImageForUpload(file)
       const thumbnailUrl = await createImageThumbnailDataUrl(displayUrl)
-      customCell = createCustomCell(file.name, displayUrl, {
+      setToast('Analyzing source image')
+      const assetInsight = await analyzeUploadedAsset(generationUrl, file.name)
+      customCell = applyAssetInsightToCell(createCustomCell(file.name, displayUrl, {
         provider: requestedMode,
         requestedProvider: requestedMode,
         thumbnailUrl: thumbnailUrl || displayUrl,
         type: requestedMode === 'cinematic' ? 'JS Depth preview asset' : undefined,
-      })
+      }), assetInsight)
       customCell.generation = {
         ...customCell.generation,
         provider: requestedMode,

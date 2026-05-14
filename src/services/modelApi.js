@@ -47,6 +47,16 @@ export async function create3dGeneration({ provider, imageDataUrl, fileName, pro
   return readApiResponse(response)
 }
 
+export async function analyzeAssetImage({ imageDataUrl, fileName }) {
+  const response = await fetch(apiUrl('/api/3d/analyze'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageDataUrl, fileName }),
+  })
+
+  return readApiResponse(response)
+}
+
 export async function uploadLocal3dModel(file) {
   const response = await fetch(apiUrl(`/api/3d/local-model?fileName=${encodeURIComponent(file.name)}`), {
     method: 'POST',

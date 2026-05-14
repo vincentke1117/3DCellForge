@@ -16,6 +16,7 @@ describe('asset metadata inference', () => {
 
     assert.equal(metadata.subtitle, 'Museum Artifact')
     assert.match(metadata.description, /museum-style artifact/i)
+    assert.deepEqual(metadata.facts.find(([label]) => label === 'Scene'), ['Scene', 'Museum Turntable'])
     assert.ok(metadata.tags.includes('artifact'))
   })
 
@@ -32,6 +33,7 @@ describe('asset metadata inference', () => {
 
     assert.equal(metadata.subtitle, 'Performance Vehicle')
     assert.match(metadata.value, /Road push-in/)
+    assert.ok(metadata.tags.includes('low camera'))
   })
 
   it('classifies aircraft carriers as vessels instead of aircraft', () => {

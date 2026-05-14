@@ -9,6 +9,7 @@ test('infers object-aware demo motion profiles', () => {
   assert.equal(inferMotionProfile({ name: 'advanced fighter jet render' }).id, 'aircraft')
   assert.equal(inferMotionProfile({ name: 'Chinese aircraft carrier' }).id, 'vessel')
   assert.equal(inferMotionProfile({ name: 'chinese aircraft car...' }).id, 'vessel')
+  assert.equal(inferMotionProfile({ name: '戴金面罩青铜人头像', sourceFileName: 'sanxingdui-bronze-mask.png' }).id, 'artifact')
   assert.equal(inferMotionProfile({ name: 'Plant Cell', template: 'plant' }).id, 'specimen')
   assert.equal(inferMotionProfile({ name: 'Luxury watch model' }).id, 'product')
 })

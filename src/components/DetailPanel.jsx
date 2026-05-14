@@ -74,7 +74,7 @@ export function DetailPanel({ selectedCell, favoriteKey, setFavoriteKey, customC
         </div>
         <p>
           <Sparkles size={13} />
-          Inferred from asset name, source file, and generation metadata.
+          Inferred from {metadata.insightSource}.
         </p>
       </section>
     </aside>

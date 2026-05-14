@@ -85,10 +85,36 @@ test('demo mode uses a clean presentation surface', async ({ page }) => {
   await expect(page.locator('.demo-exit-button')).toBeVisible()
   await expect(page.locator('.selection-shelf')).toBeHidden()
   await expect(page.locator('.command-zone')).toBeHidden()
-
-  await expectClippedScreenshot(page, '.studio-window', 'demo-mode.png', {
-    mask: [page.locator('.cell-viewer canvas')],
+  await page.addStyleTag({
+    content: '.workbench-v2.demo-mode .cell-viewer canvas { opacity: 0 !important; }',
   })
+
+  await expectClippedScreenshot(page, '.studio-window', 'demo-mode.png')
+})
+
+test('view mode controls change the live viewer state', async ({ page }) => {
+  await page.goto('/')
+  await prepareWorkbench(page)
+
+  const solidButton = page.getByRole('button', { name: 'Solid view' })
+  const xrayButton = page.getByRole('button', { name: 'X-Ray layer view' })
+  const inspectButton = page.getByRole('button', { name: 'Inspect focus view' })
+
+  await expect(solidButton).toBeVisible()
+  await expect(xrayButton).toBeVisible()
+  await expect(inspectButton).toBeVisible()
+
+  await solidButton.click()
+  await expect(page.locator('.cell-viewer.solid')).toBeVisible()
+  await expect(page.locator('.stage-status')).toContainText('Solid')
+
+  await xrayButton.click()
+  await expect(page.locator('.cell-viewer.layers')).toBeVisible()
+  await expect(page.locator('.stage-status')).toContainText('X-Ray')
+
+  await inspectButton.click()
+  await expect(page.locator('.cell-viewer.focus')).toBeVisible()
+  await expect(page.locator('.stage-status')).toContainText('Inspect')
 })
 
 test('inspector explains the selected object instead of generic biology parts', async ({ page }) => {

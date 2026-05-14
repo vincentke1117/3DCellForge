@@ -30,6 +30,7 @@ const DEFAULT_CELL_CAMERA_POSITION = [0, 0.1, 6.05]
 const DEFAULT_RELIEF_CAMERA_POSITION = [0, 0.18, 5.35]
 const DEFAULT_CAMERA_TARGET = [0, 0, 0]
 const PRESENTATION_DURATION_BY_PROFILE = {
+  artifact: 9000,
   road: 7800,
   aircraft: 7200,
   vessel: 8600,
@@ -89,6 +90,15 @@ function PresentationMotionRig({
 
     const { sweep, wave, lift } = smoothPingPong(clock.elapsedTime, PRESENTATION_DURATION_BY_PROFILE[motionProfile] || DEFAULT_PRESENTATION_DURATION)
     const root = targetRef.current
+
+    if (motionProfile === 'artifact') {
+      root.position.set(wave * 0.035, -0.03 + lift * 0.01, 0.02 - sweep * 0.1)
+      root.rotation.set(-0.06 + lift * 0.012, -0.74 + sweep * 1.48, wave * 0.01)
+      root.scale.setScalar(1.02 + sweep * 0.05)
+      camera.position.set(1.05 + wave * 0.36, 0.74 + lift * 0.035, 4.78 - sweep * 0.32)
+      lookAt(camera, [0, 0.08, 0])
+      return
+    }
 
     if (motionProfile === 'road') {
       root.position.set(wave * 0.08, -0.08 + wave * 0.018, -0.7 + sweep * 1.12)
@@ -169,16 +179,30 @@ function PresentationEnvironment({ profile }) {
       <group position={[0, -1.42, 0.25]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh position={[0, 0, 0]}>
           <planeGeometry args={[5.8, 11.2]} />
-          <meshStandardMaterial color="#d8ddd8" transparent opacity={0.28} roughness={0.82} depthWrite={false} />
+          <meshStandardMaterial color="#687579" transparent opacity={0.64} roughness={0.86} depthWrite={false} />
+        </mesh>
+        <mesh position={[0, 0.006, 0]}>
+          <planeGeometry args={[2.15, 11.2]} />
+          <meshStandardMaterial color="#2c3638" transparent opacity={0.46} roughness={0.92} depthWrite={false} />
         </mesh>
         <mesh position={[-1.42, 0.012, 0]}>
           <planeGeometry args={[0.035, 11.2]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.36} depthWrite={false} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.76} depthWrite={false} />
         </mesh>
         <mesh position={[1.42, 0.012, 0]}>
           <planeGeometry args={[0.035, 11.2]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.36} depthWrite={false} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.76} depthWrite={false} />
         </mesh>
+        {[-2.18, 2.18].map((x) => (
+          <Line
+            key={x}
+            points={[[x, 0.03, -5.3], [x, 0.03, 5.3]]}
+            color="#d7e5e7"
+            lineWidth={2.2}
+            transparent
+            opacity={0.48}
+          />
+        ))}
         {stripeOffsets.map((z, index) => (
           <mesh
             key={z}
@@ -198,6 +222,20 @@ function PresentationEnvironment({ profile }) {
   if (profile === 'aircraft') {
     return (
       <group ref={groupRef} position={[0, 0.45, -0.35]}>
+        {[
+          [-2.4, 1.15, -0.45, 0.62],
+          [1.9, 1.0, -0.6, 0.5],
+          [-1.4, -0.9, -0.55, 0.42],
+        ].map(([x, y, z, scale], index) => (
+          <group key={index} position={[x, y, z]} scale={scale}>
+            {[-0.28, 0, 0.32].map((offset, cloudIndex) => (
+              <mesh key={cloudIndex} position={[offset, Math.sin(cloudIndex) * 0.06, 0]}>
+                <sphereGeometry args={[0.34, 24, 24]} />
+                <meshBasicMaterial color="#ffffff" transparent opacity={0.22} depthWrite={false} />
+              </mesh>
+            ))}
+          </group>
+        ))}
         {[-1.55, -0.92, -0.28, 0.36, 0.98, 1.54].map((y, index) => (
           <Line
             key={y}
@@ -221,7 +259,7 @@ function PresentationEnvironment({ profile }) {
       <group position={[0, -1.36, 0.15]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh>
           <planeGeometry args={[6.4, 8.6]} />
-          <meshStandardMaterial color="#9dd2de" transparent opacity={0.22} roughness={0.7} depthWrite={false} />
+          <meshStandardMaterial color="#67aebf" transparent opacity={0.5} roughness={0.72} depthWrite={false} />
         </mesh>
         {waveOffsets.map((z, index) => (
           <mesh
@@ -232,13 +270,70 @@ function PresentationEnvironment({ profile }) {
             position={[0, 0.016, z]}
           >
             <planeGeometry args={[4.8 - (index % 3) * 0.5, 0.025]} />
-            <meshBasicMaterial color={index % 2 ? '#ffffff' : '#5da6bc'} transparent opacity={index % 2 ? 0.48 : 0.3} depthWrite={false} />
+            <meshBasicMaterial color={index % 2 ? '#ffffff' : '#2c839b'} transparent opacity={index % 2 ? 0.78 : 0.52} depthWrite={false} />
           </mesh>
         ))}
         <mesh position={[0, 0.022, -0.7]}>
-          <planeGeometry args={[2.8, 1.4]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.2} depthWrite={false} />
+          <planeGeometry args={[3.4, 1.55]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.38} depthWrite={false} />
         </mesh>
+      </group>
+    )
+  }
+
+  if (profile === 'artifact') {
+    return (
+      <group>
+        <spotLight position={[0, 4.4, 2.8]} angle={0.38} penumbra={0.78} intensity={4.2} color="#ffd29a" />
+        <pointLight position={[-2.8, 1.1, 1.8]} intensity={1.1} color="#7dd3fc" />
+        <mesh position={[0, -1.42, 0]} receiveShadow>
+          <cylinderGeometry args={[1.38, 1.62, 0.24, 96]} />
+          <meshStandardMaterial color="#1c1713" metalness={0.18} roughness={0.48} />
+        </mesh>
+        <mesh position={[0, -1.28, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[1.52, 96]} />
+          <meshBasicMaterial color="#c7923a" transparent opacity={0.16} depthWrite={false} />
+        </mesh>
+        {[1.55, 1.95, 2.35].map((radius, index) => (
+          <mesh key={radius} position={[0, -1.25 + index * 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[radius, 0.006, 8, 128]} />
+            <meshBasicMaterial color="#c7923a" transparent opacity={0.26 - index * 0.05} depthWrite={false} />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
+
+  if (profile === 'product') {
+    return (
+      <group>
+        <mesh position={[0, -1.38, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[2.25, 96]} />
+          <meshStandardMaterial color="#e9f0ef" transparent opacity={0.44} roughness={0.22} metalness={0.05} depthWrite={false} />
+        </mesh>
+        {[-1.9, 1.9].map((x) => (
+          <mesh key={x} position={[x, 0.62, -0.62]} rotation={[0.12, x > 0 ? -0.34 : 0.34, 0]}>
+            <planeGeometry args={[0.52, 1.35]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.3} depthWrite={false} />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
+
+  if (profile === 'specimen') {
+    return (
+      <group>
+        <mesh position={[0, -1.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[2.45, 96]} />
+          <meshBasicMaterial color="#b7d7db" transparent opacity={0.18} depthWrite={false} />
+        </mesh>
+        {[-1.8, -1.2, -0.6, 0, 0.6, 1.2, 1.8].map((x) => (
+          <Line key={`x-${x}`} points={[[x, -1.36, -1.8], [x, -1.36, 1.8]]} color="#8cc4cf" lineWidth={0.8} transparent opacity={0.22} />
+        ))}
+        {[-1.8, -1.2, -0.6, 0, 0.6, 1.2, 1.8].map((z) => (
+          <Line key={`z-${z}`} points={[[-1.8, -1.36, z], [1.8, -1.36, z]]} color="#8cc4cf" lineWidth={0.8} transparent opacity={0.22} />
+        ))}
       </group>
     )
   }
@@ -404,9 +499,15 @@ function PlantReticulum() {
   )
 }
 
-function PlantCellModel({ selected, crossSection, onSelect, hideOthers, proofMode }) {
+function PlantCellModel({ selected, crossSection, onSelect, hideOthers, proofMode, viewMode = 'layers' }) {
   const group = useRef()
-  const show = (id) => !hideOthers || id === selected || id === 'membrane'
+  const xrayMode = viewMode === 'layers'
+  const focusMode = viewMode === 'focus'
+  const effectiveHideOthers = hideOthers || focusMode
+  const effectiveCrossSection = crossSection || xrayMode
+  const show = (id) => !effectiveHideOthers || id === selected || id === 'membrane'
+  const shellOpacity = effectiveHideOthers && selected !== 'membrane' ? 0.3 : effectiveCrossSection ? 0.42 : 0.68
+  const shellWireOpacity = xrayMode ? 0.22 : selected === 'membrane' ? 0.24 : 0
   const proofOffset = (id) => {
     if (!proofMode) return [0, 0, 0]
     return {
@@ -463,7 +564,7 @@ function PlantCellModel({ selected, crossSection, onSelect, hideOthers, proofMod
             <meshPhysicalMaterial
               color="#7fb59d"
               transparent
-              opacity={crossSection ? 0.48 : 0.62}
+              opacity={shellOpacity}
               roughness={0.24}
               metalness={0.02}
               transmission={0.12}
@@ -472,9 +573,9 @@ function PlantCellModel({ selected, crossSection, onSelect, hideOthers, proofMod
               clearcoatRoughness={0.18}
             />
           </RoundedBox>
-          {selected === 'membrane' && (
+          {(selected === 'membrane' || xrayMode) && (
             <RoundedBox args={[3.55, 2.26, 0.48]} radius={0.2} smoothness={8} position={[0, 0, 0.2]}>
-              <meshBasicMaterial color="#6b9844" wireframe transparent opacity={0.24} />
+              <meshBasicMaterial color={xrayMode ? '#54b9d2' : '#6b9844'} wireframe transparent opacity={shellWireOpacity || 0.24} />
             </RoundedBox>
           )}
         </ClickableGroup>
@@ -694,13 +795,18 @@ function CellSpecificStructures({ cellId, onSelect }) {
   return null
 }
 
-function CellModel({ cellId, selected, crossSection, onSelect, hideOthers, proofMode }) {
+function CellModel({ cellId, selected, crossSection, onSelect, hideOthers, proofMode, viewMode = 'layers' }) {
   const group = useRef()
   const body = CELL_BODY[cellId] ?? CELL_BODY['white-blood']
   const seedOffset = CELL_TYPES.findIndex((cell) => cell.id === cellId) * 100
-  const show = (id) => !hideOthers || id === selected || id === 'membrane'
+  const xrayMode = viewMode === 'layers'
+  const focusMode = viewMode === 'focus'
+  const effectiveHideOthers = hideOthers || focusMode
+  const effectiveCrossSection = crossSection || xrayMode
+  const show = (id) => !effectiveHideOthers || id === selected || id === 'membrane'
   const bodyRotation = body.kind === 'capsule' ? [0, 0, Math.PI / 2] : [0, 0, 0]
-  const bodyOpacity = hideOthers && selected !== 'membrane' ? 0.24 : crossSection ? 0.42 : 0.62
+  const bodyOpacity = effectiveHideOthers && selected !== 'membrane' ? 0.24 : effectiveCrossSection ? 0.38 : 0.66
+  const wireOpacity = xrayMode ? 0.28 : selected === 'membrane' ? 0.3 : 0.12
   const proofOffset = (id) => {
     if (!proofMode) return [0, 0, 0]
     return {
@@ -779,11 +885,11 @@ function CellModel({ cellId, selected, crossSection, onSelect, hideOthers, proof
           </mesh>
           <mesh scale={body.scale.map((value) => value * 1.04)} rotation={bodyRotation}>
             <CellBodyGeometry kind={body.kind} />
-            <meshBasicMaterial color="#f4f0e4" wireframe transparent opacity={selected === 'membrane' ? 0.3 : 0.12} />
+            <meshBasicMaterial color={xrayMode ? '#6bc4d8' : '#f4f0e4'} wireframe transparent opacity={wireOpacity} />
           </mesh>
         </ClickableGroup>
 
-        {crossSection && (
+        {effectiveCrossSection && (
           <mesh position={[0.12, -0.04, 0.1]} rotation={[0, 0.05, 0]} scale={[1.58, 1.28, 1]}>
             <circleGeometry args={[1.05, 96]} />
             <meshBasicMaterial color="#f6e9dc" transparent opacity={0.32} side={THREE.DoubleSide} />
@@ -952,22 +1058,52 @@ export class ViewerErrorBoundary extends Component {
   }
 }
 
-function GeneratedGlbModel({ modelUrl, proofMode, onSelect }) {
+function GeneratedGlbModel({ modelUrl, proofMode, viewMode = 'solid', onSelect }) {
   const gltf = useGLTF(modelUrl)
   const { object, scale } = useMemo(() => {
     const cloned = gltf.scene.clone(true)
+    const xrayMode = viewMode === 'layers'
+    const focusMode = viewMode === 'focus'
+    const prepareMaterial = (sourceMaterial) => {
+      if (xrayMode) {
+        return new THREE.MeshBasicMaterial({
+          color: '#60c8df',
+          transparent: true,
+          opacity: 0.36,
+          wireframe: true,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      }
+
+      const material = sourceMaterial?.clone
+        ? sourceMaterial.clone()
+        : new THREE.MeshStandardMaterial({ color: '#dbe7ea', roughness: 0.42, metalness: 0.04 })
+
+      material.side = THREE.DoubleSide
+      material.envMapIntensity = Math.max(material.envMapIntensity || 0, focusMode ? 1.75 : 1.15)
+
+      if (focusMode && 'emissive' in material) {
+        material.emissive = new THREE.Color('#12384d')
+        material.emissiveIntensity = Math.max(material.emissiveIntensity || 0, 0.12)
+      }
+
+      if (focusMode && 'roughness' in material) material.roughness = Math.min(material.roughness ?? 0.48, 0.36)
+      if (focusMode && 'metalness' in material) material.metalness = Math.max(material.metalness ?? 0, 0.04)
+
+      material.needsUpdate = true
+      return material
+    }
 
     cloned.traverse((node) => {
       if (!node.isMesh) return
       node.castShadow = true
       node.receiveShadow = true
+      node.renderOrder = xrayMode ? 6 : 0
       if (node.material) {
-        const materials = Array.isArray(node.material) ? node.material : [node.material]
-        materials.forEach((material) => {
-          material.side = THREE.DoubleSide
-          material.envMapIntensity = Math.max(material.envMapIntensity || 0, 1.15)
-          material.needsUpdate = true
-        })
+        node.material = Array.isArray(node.material)
+          ? node.material.map((material) => prepareMaterial(material))
+          : prepareMaterial(node.material)
       }
     })
 
@@ -981,7 +1117,7 @@ function GeneratedGlbModel({ modelUrl, proofMode, onSelect }) {
       object: cloned,
       scale: 3.25 / longest,
     }
-  }, [gltf.scene])
+  }, [gltf.scene, viewMode])
 
   return (
     <group
@@ -997,8 +1133,10 @@ function GeneratedGlbModel({ modelUrl, proofMode, onSelect }) {
   )
 }
 
-function CinematicReliefSpecimen({ imageUrl, autoRotate, onSelect }) {
+function CinematicReliefSpecimen({ imageUrl, autoRotate, onSelect, viewMode = 'layers' }) {
   const groupRef = useRef(null)
+  const xrayMode = viewMode === 'layers'
+  const focusMode = viewMode === 'focus'
   const sourceTexture = useTexture(imageUrl)
   const texture = useMemo(() => {
     const nextTexture = sourceTexture.clone()
@@ -1033,21 +1171,28 @@ function CinematicReliefSpecimen({ imageUrl, autoRotate, onSelect }) {
       <mesh geometry={relief.geometry} position={[0, 0, 0.18]} renderOrder={10}>
         <meshPhysicalMaterial
           map={texture}
-          alphaTest={0.24}
-          depthWrite
-          roughness={0.46}
+          alphaTest={xrayMode ? 0.16 : 0.24}
+          transparent={xrayMode}
+          opacity={xrayMode ? 0.78 : 1}
+          depthWrite={!xrayMode}
+          roughness={focusMode ? 0.34 : 0.46}
           metalness={0.02}
-          clearcoat={0.42}
+          clearcoat={focusMode ? 0.66 : 0.42}
           clearcoatRoughness={0.18}
-          envMapIntensity={1.35}
+          envMapIntensity={focusMode ? 1.72 : 1.35}
           side={THREE.DoubleSide}
         />
       </mesh>
+      {xrayMode && (
+        <mesh geometry={relief.geometry} position={[0, 0, 0.185]} renderOrder={11}>
+          <meshBasicMaterial color="#5fc6df" wireframe transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      )}
     </group>
   )
 }
 
-function CinematicReliefScene({ imageUrl, autoRotate, presentationMode, motionProfile, onSelectOrganelle }) {
+function CinematicReliefScene({ imageUrl, autoRotate, presentationMode, motionProfile, onSelectOrganelle, viewMode }) {
   const presentationRoot = useRef(null)
 
   return (
@@ -1077,7 +1222,7 @@ function CinematicReliefScene({ imageUrl, autoRotate, presentationMode, motionPr
       />
       <Suspense fallback={null}>
         <group ref={presentationRoot}>
-          <CinematicReliefSpecimen imageUrl={imageUrl} autoRotate={autoRotate && !presentationMode} onSelect={onSelectOrganelle} />
+          <CinematicReliefSpecimen imageUrl={imageUrl} autoRotate={autoRotate && !presentationMode} onSelect={onSelectOrganelle} viewMode={viewMode} />
         </group>
       </Suspense>
       <OrbitControls enabled={!presentationMode} enablePan={false} minDistance={3.15} maxDistance={6.2} enableDamping dampingFactor={0.08} autoRotate={autoRotate && !presentationMode} autoRotateSpeed={0.32} />
@@ -1085,7 +1230,7 @@ function CinematicReliefScene({ imageUrl, autoRotate, presentationMode, motionPr
   )
 }
 
-export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrganelle, autoRotate, presentationMode = false, motionProfile = 'specimen' }) {
+export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrganelle, autoRotate, presentationMode = false, motionProfile = 'specimen', viewMode = 'layers' }) {
   const [pointer, setPointer] = useState({ x: 0, y: 0 })
   const [visualState, setVisualState] = useState(null)
   const visual = visualState?.imageUrl === imageUrl ? visualState.visual : null
@@ -1135,7 +1280,7 @@ export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrga
 
   return (
     <div
-      className="cinematic-layer-scene"
+      className={`cinematic-layer-scene mode-${viewMode}`}
       style={{ '--px': pointer.x.toFixed(3), '--py': pointer.y.toFixed(3) }}
       onPointerMove={handlePointerMove}
       onPointerLeave={() => {
@@ -1145,7 +1290,7 @@ export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrga
     >
       {!webglAvailable && <div className="cinematic-depth-field" />}
       {webglAvailable ? (
-        <CinematicReliefScene imageUrl={imageUrl} autoRotate={autoRotate} presentationMode={presentationMode} motionProfile={motionProfile} onSelectOrganelle={onSelectOrganelle} />
+        <CinematicReliefScene imageUrl={imageUrl} autoRotate={autoRotate} presentationMode={presentationMode} motionProfile={motionProfile} onSelectOrganelle={onSelectOrganelle} viewMode={viewMode} />
       ) : (
         <div
           className={`layered-png-stage motion-${motionProfile} ${autoRotate ? 'auto' : ''}`}
@@ -1187,7 +1332,7 @@ export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrga
   )
 }
 
-export function CellScene({ selectedCell, modelCellId, referenceImageUrl, generatedModelUrl, selectedOrganelle, crossSection, autoRotate, hideOthers, proofMode, renderQuality, presentationMode = false, motionProfile = 'specimen', onSelectOrganelle, onExporterReady = null }) {
+export function CellScene({ selectedCell, modelCellId, referenceImageUrl, generatedModelUrl, selectedOrganelle, crossSection, autoRotate, hideOthers, proofMode, viewMode = 'layers', renderQuality, presentationMode = false, motionProfile = 'specimen', onSelectOrganelle, onExporterReady = null }) {
   const isPlant = modelCellId === 'plant'
   const presentationRoot = useRef(null)
   const exportRoot = useRef(null)
@@ -1220,12 +1365,12 @@ export function CellScene({ selectedCell, modelCellId, referenceImageUrl, genera
         <group ref={exportRoot} name={`${selectedCell}-model-export-root`}>
           {generatedModelUrl ? (
             <Suspense fallback={null}>
-              <GeneratedGlbModel modelUrl={apiUrl(generatedModelUrl)} proofMode={proofMode} onSelect={onSelectOrganelle} />
+              <GeneratedGlbModel modelUrl={apiUrl(generatedModelUrl)} proofMode={proofMode} viewMode={viewMode} onSelect={onSelectOrganelle} />
             </Suspense>
           ) : isPlant ? (
-            <PlantCellModel selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+            <PlantCellModel selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} viewMode={viewMode} onSelect={onSelectOrganelle} />
           ) : (
-            <CellModel cellId={modelCellId} selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+            <CellModel cellId={modelCellId} selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} viewMode={viewMode} onSelect={onSelectOrganelle} />
           )}
         </group>
       </group>

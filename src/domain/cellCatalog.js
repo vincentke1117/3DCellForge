@@ -95,6 +95,15 @@ export function getOrganelleDetail(cellId, organelleId, customCells = getStoredC
 }
 
 export function getGenerationPrompt(cell) {
+  if (cell.intelligence?.generationPrompt) {
+    return [
+      cell.intelligence.generationPrompt,
+      'Make it a single integrated object, not a flat relief, not a display base.',
+      'Preserve the recognizable silhouette, major volumes, surface details, and material separation.',
+      'Style: polished interactive 3D studio asset, clean PBR materials, soft studio lighting.',
+    ].join(' ')
+  }
+
   return [
     `A high quality 3D model generated from the uploaded reference image named ${cell.name}.`,
     'Make it a single integrated object, not a flat relief, not a display base.',

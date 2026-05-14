@@ -1,6 +1,7 @@
-import { useState } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Heart, RotateCcw, Sparkles as SparklesIcon, Trash2 } from 'lucide-react'
 
+import { CELL_TYPES } from '../domain/cellData.js'
+import { getCell, getPrimaryCells } from '../domain/cellCatalog.js'
 import { getProviderLabel } from '../services/modelApi.js'
 import { CellThumb } from './CellThumb.jsx'
 
@@ -8,19 +9,20 @@ const ACTIVE_STATUSES = new Set(['uploading', 'processing', 'queued', 'running',
 const READY_STATUSES = new Set(['success', 'local'])
 
 export function LeftSidebar({ selectedCell, setSelectedCell, customCells, onDeleteCustomCell, onRetryGeneration }) {
-  const [recentOpen, setRecentOpen] = useState(false)
-  const libraryCells = customCells.filter((cell) => cell.custom && !cell.reference)
-  const selectedCustomCell = libraryCells.find((cell) => cell.id === selectedCell)
-  const activeAsset = selectedCustomCell || libraryCells[0]
-  const recentCells = libraryCells.filter((cell) => cell.id !== activeAsset?.id)
+  const libraryCells = getPrimaryCells(customCells).filter((cell) => cell.custom && !cell.reference)
+  const activeModel = getCell(selectedCell, customCells)
+  const activeIsCustom = Boolean(activeModel.custom && !activeModel.reference)
+  const recentCells = libraryCells.filter((cell) => cell.id !== activeModel.id)
+  const starterCells = CELL_TYPES.filter((cell) => cell.id !== activeModel.id)
   const queueItems = libraryCells.filter((cell) => cell.generation)
   const storedCustomIds = new Set(customCells.map((cell) => cell.id))
   const queueCount = queueItems.filter((cell) => ACTIVE_STATUSES.has(String(cell.generation?.status || '').toLowerCase())).length || queueItems.length
 
   function renderCellRow(cell, { compact = false } = {}) {
-    const canDelete = storedCustomIds.has(cell.id)
+    const canDelete = Boolean(cell.custom && storedCustomIds.has(cell.id))
     const generation = cell.generation || {}
-    const status = formatQueueStatus(String(generation.status || 'ready').toLowerCase(), generation.progress)
+    const providerLabel = cell.custom ? getProviderLabel(generation.provider || generation.requestedProvider) : 'Starter'
+    const status = cell.custom ? formatQueueStatus(String(generation.status || 'ready').toLowerCase(), generation.progress) : 'ready'
 
     return (
       <div key={cell.id} className={canDelete ? 'cell-row-shell can-delete' : 'cell-row-shell'}>
@@ -32,7 +34,7 @@ export function LeftSidebar({ selectedCell, setSelectedCell, customCells, onDele
           <CellThumb cell={cell} selected={selectedCell === cell.id} />
           <span>
             <strong>{cell.name}</strong>
-            <small>{getProviderLabel(generation.provider || generation.requestedProvider)} · {status}</small>
+            <small>{providerLabel} · {status}</small>
           </span>
           {!canDelete && selectedCell === cell.id && <Heart size={13} fill="currentColor" />}
         </button>
@@ -55,34 +57,36 @@ export function LeftSidebar({ selectedCell, setSelectedCell, customCells, onDele
           </span>
           <ChevronDown size={14} />
         </header>
-        {activeAsset && (
-          <div className="pinned-models">
-            <div className="pinned-model-block">
-              <span className="model-section-label">{selectedCustomCell ? 'Active Asset' : 'Latest Asset'}</span>
-              {renderCellRow(activeAsset)}
-            </div>
+        <div className="pinned-models">
+          <div className="pinned-model-block">
+            <span className="model-section-label">{activeIsCustom ? 'Active Asset' : 'Active Starter'}</span>
+            {renderCellRow(activeModel)}
           </div>
-        )}
+        </div>
         <div className="cell-list">
-          {!activeAsset && recentCells.length === 0 && (
-            <div className="library-empty">
-              <SparklesIcon size={16} />
-              <span>No saved models yet.</span>
-              <small>Upload an image or GLB from Asset Source.</small>
-            </div>
-          )}
           {recentCells.length > 0 && (
             <div className="recent-cells">
-              <button type="button" className="recent-toggle" onClick={() => setRecentOpen((value) => !value)} aria-expanded={recentOpen}>
+              <div className="recent-toggle" aria-expanded="true">
                 <span>Saved Assets</span>
                 <small>{recentCells.length}</small>
                 <ChevronDown size={13} />
-              </button>
-              {recentOpen && (
-                <div className="recent-cell-list">
-                  {recentCells.map((cell) => renderCellRow(cell, { compact: true }))}
-                </div>
-              )}
+              </div>
+              <div className="recent-cell-list">
+                {recentCells.map((cell) => renderCellRow(cell, { compact: true }))}
+              </div>
+            </div>
+          )}
+          <div className="starter-cells">
+            <span className="model-section-label">Starter Models</span>
+            <div className="starter-cell-list">
+              {starterCells.map((cell) => renderCellRow(cell, { compact: true }))}
+            </div>
+          </div>
+          {libraryCells.length === 0 && (
+            <div className="library-empty compact-empty">
+              <SparklesIcon size={16} />
+              <span>No saved uploads yet.</span>
+              <small>Use Asset Source to add your own image or GLB.</small>
             </div>
           )}
         </div>

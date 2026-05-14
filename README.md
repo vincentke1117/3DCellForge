@@ -89,8 +89,11 @@ Then set:
 TRIPO_API_KEY=your_tripo_key
 FAL_API_KEY=your_fal_key
 RODIN_API_KEY=your_rodin_api_key
+OPENAI_API_KEY=your_openai_key
 API_HOST=127.0.0.1
 ```
+
+`OPENAI_API_KEY` enables optional image understanding through `/api/3d/analyze`. When configured, uploads are classified by vision into asset type, material focus, inspection notes, scene profile, tags, and a better image-to-3D prompt. Without it, the app keeps using local filename/metadata heuristics.
 
 For Hunyuan3D local backup mode, start your local Hunyuan3D API server and set:
 
