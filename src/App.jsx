@@ -232,7 +232,7 @@ function App() {
       setSelectedOrganelle(getDefaultOrganelle(nextCell.id, customCells))
       setCompareCell(getCellProfile(nextCell.id, customCells).compareTarget)
       setToast(`Presentation: ${nextCell.name}`)
-    }, 5200)
+    }, 9200)
 
     return () => window.clearInterval(timer)
   }, [allCells, customCells, demoMode, selectedCell])
@@ -1116,6 +1116,8 @@ function App() {
               renderQuality={settings.quality}
               screenshotScale={settings.screenshotScale}
               customCells={customCells}
+              generationHistory={generationHistory}
+              demoMode={demoMode}
               onNotify={setToast}
               onExport={handleExport}
               exportAvailable={Boolean(sceneExporter)}

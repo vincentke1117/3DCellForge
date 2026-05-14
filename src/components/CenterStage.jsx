@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
-import { Box, Camera, CircleDot, Eye, Layers3, Move3D, RotateCcw, Upload } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Box, Camera, CircleDot, Eye, Gauge, Layers3, Move3D, RotateCcw, Upload } from 'lucide-react'
 import { getCell, getGeneratedModelUrl, getOrganelleDetail } from '../domain/cellCatalog.js'
 import { downloadCanvasImage } from '../lib/downloads.js'
 import { downloadLayeredPngSnapshot } from '../lib/imagePipeline.js'
+import { formatBytes, formatDuration, formatNumber, getModelQuality, inspectModelUrl } from '../lib/modelQuality.js'
+import { inferMotionProfile } from '../lib/motionProfiles.js'
 import { canUseWebGL } from '../lib/webgl.js'
 import { getProviderLabel } from '../services/modelApi.js'
 import { CellFallback, CellScene, CinematicLayerVisual, ViewerErrorBoundary } from '../viewer/CellViewer.jsx'
@@ -51,6 +53,8 @@ export function CenterStage({
   renderQuality,
   screenshotScale = 1,
   customCells,
+  generationHistory = [],
+  demoMode = false,
   onNotify,
   onExport,
   exportAvailable,
@@ -67,6 +71,7 @@ export function CenterStage({
   const [resetNonce, setResetNonce] = useState(0)
   const [capturePulse, setCapturePulse] = useState(false)
   const [viewerError, setViewerError] = useState(null)
+  const [modelMetrics, setModelMetrics] = useState(null)
   const cell = getCell(selectedCell, customCells)
   const modelCellId = cell.custom ? cell.template : selectedCell
   const referenceImageUrl = cell.custom ? cell.imageUrl || cell.thumbnailUrl || '' : ''
@@ -75,13 +80,18 @@ export function CenterStage({
   const generationProviderLabel = getProviderLabel(generation?.provider)
   const generationFailureTitle = generation?.requestedProvider === 'auto' ? '3D generation failed' : `${generationProviderLabel} generation failed`
   const isCinematicCell = cell.custom && generation?.provider === 'cinematic'
+  const effectiveAutoRotate = autoRotate || demoMode
+  const effectiveHideOthers = demoMode ? false : hideOthers
+  const effectiveIsolated = demoMode ? false : isIsolated
+  const effectiveProofMode = demoMode ? false : proofMode
+  const effectiveViewMode = demoMode ? 'layers' : viewMode
   const detail = getOrganelleDetail(selectedCell, selectedOrganelle, customCells)
   const webglAvailable = canUseWebGL()
   const generationPending = cell.custom && !generatedModelUrl && generation?.status && !['failed', 'local'].includes(generation.status)
   const generationFailed = cell.custom && !generatedModelUrl && generation?.status === 'failed'
   const stageStatusText = isCinematicCell
-    ? `JS image relief · ${autoRotate ? 'Auto orbit' : 'Manual orbit'} · ${viewMode}`
-    : `${generatedModelUrl ? `${generationProviderLabel} GLB loaded` : generationFailed ? `${generationProviderLabel} failed; source image shown` : referenceImageUrl ? `${generationProviderLabel} ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · ${autoRotate || proofMode ? 'Auto rotate' : 'Manual orbit'} · ${viewMode}`
+    ? `JS image relief · ${effectiveAutoRotate ? 'Auto orbit' : 'Manual orbit'} · ${effectiveViewMode}`
+    : `${generatedModelUrl ? `${generationProviderLabel} GLB loaded` : generationFailed ? `${generationProviderLabel} failed; source image shown` : referenceImageUrl ? `${generationProviderLabel} ${generation?.status || 'pending'}` : webglAvailable ? 'WebGL live 3D' : 'Fallback image'} · ${effectiveAutoRotate || effectiveProofMode ? 'Auto rotate' : 'Manual orbit'} · ${effectiveViewMode}`
   const referenceLabel = isCinematicCell
     ? 'Source image used for browser-side JS depth relief'
     : generatedModelUrl
@@ -89,6 +99,9 @@ export function CenterStage({
     : `Source image for ${generationProviderLabel} generation`
   const viewerResetKey = `${selectedCell}-${generatedModelUrl}-${generation?.provider || 'built-in'}-${resetNonce}`
   const activeViewerError = viewerError?.key === viewerResetKey ? viewerError.message : ''
+  const activeModelMetrics = modelMetrics?.url === generatedModelUrl ? modelMetrics.data : null
+  const quality = useMemo(() => getModelQuality(cell, activeModelMetrics, generationHistory), [activeModelMetrics, cell, generationHistory])
+  const motionProfile = useMemo(() => inferMotionProfile(cell), [cell])
   const viewerFallback = (
     <CellFallback
       selectedCell={selectedCell}
@@ -161,8 +174,28 @@ export function CenterStage({
     if (isCinematicCell) onExporterReady?.(null)
   }, [isCinematicCell, onExporterReady])
 
+  useEffect(() => {
+    let cancelled = false
+
+    if (!generatedModelUrl) return undefined
+
+    inspectModelUrl(generatedModelUrl)
+      .then((metrics) => {
+        if (!cancelled) setModelMetrics({ url: generatedModelUrl, data: metrics })
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setModelMetrics({ url: generatedModelUrl, data: { error: error instanceof Error ? error.message : 'Model metrics unavailable.' } })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [generatedModelUrl])
+
   return (
-    <section className="stage-panel">
+    <section className={`stage-panel motion-${motionProfile.id}`}>
       <div className="stage-title">
         <div>
           <h1>{cell.name}</h1>
@@ -170,10 +203,20 @@ export function CenterStage({
         </div>
       </div>
       <ViewerControls crossSection={crossSection} setCrossSection={setCrossSection} viewMode={viewMode} setViewMode={setViewMode} />
-      <div className={`cell-viewer ${viewMode} ${isIsolated ? 'is-isolated' : ''} ${isCinematicCell ? 'cinematic-viewer' : ''}`}>
+      {demoMode && <PresentationMotionField profile={motionProfile.id} />}
+      {demoMode && <DemoShowcaseOverlay cell={cell} quality={quality} referenceImageUrl={referenceImageUrl} motionProfile={motionProfile} />}
+      {!demoMode && <ModelQualityCard quality={quality} />}
+      <div className={`cell-viewer ${effectiveViewMode} ${effectiveIsolated ? 'is-isolated' : ''} ${generatedModelUrl ? 'has-glb' : ''} ${webglAvailable ? 'webgl-ready' : ''} ${isCinematicCell ? 'cinematic-viewer' : ''}`}>
         <ViewerErrorBoundary resetKey={viewerResetKey} onError={handleViewerError} fallback={viewerFallback}>
           {isCinematicCell ? (
-            <CinematicLayerVisual imageUrl={referenceImageUrl} selectedOrganelle={selectedOrganelle} onSelectOrganelle={setSelectedOrganelle} autoRotate={autoRotate || proofMode} />
+            <CinematicLayerVisual
+              imageUrl={referenceImageUrl}
+              selectedOrganelle={selectedOrganelle}
+              onSelectOrganelle={setSelectedOrganelle}
+              autoRotate={effectiveAutoRotate || effectiveProofMode}
+              presentationMode={demoMode}
+              motionProfile={motionProfile.id}
+            />
           ) : (
             <>
               <CellFallback selectedCell={selectedCell} modelCellId={modelCellId} referenceImageUrl={referenceImageUrl} selectedOrganelle={selectedOrganelle} onSelectOrganelle={setSelectedOrganelle} />
@@ -186,10 +229,12 @@ export function CenterStage({
                   generatedModelUrl={generatedModelUrl}
                   selectedOrganelle={selectedOrganelle}
                   crossSection={crossSection}
-                  autoRotate={autoRotate}
-                  hideOthers={hideOthers}
-                  proofMode={proofMode}
+                  autoRotate={effectiveAutoRotate}
+                  hideOthers={effectiveHideOthers}
+                  proofMode={effectiveProofMode}
                   renderQuality={renderQuality}
+                  presentationMode={demoMode}
+                  motionProfile={motionProfile.id}
                   onSelectOrganelle={setSelectedOrganelle}
                   onExporterReady={onExporterReady}
                 />
@@ -263,5 +308,63 @@ export function CenterStage({
         </button>
       </div>
     </section>
+  )
+}
+
+function PresentationMotionField({ profile }) {
+  if (!['road', 'aircraft', 'vessel'].includes(profile)) return null
+
+  return (
+    <div className={`presentation-motion-field ${profile}`} aria-hidden="true">
+      <span />
+      <span />
+      <span />
+      <span />
+      <span />
+      <span />
+    </div>
+  )
+}
+
+function ModelQualityCard({ quality }) {
+  return (
+    <aside className="model-quality-card" aria-label="Model quality score">
+      <div className="quality-score">
+        <Gauge size={16} />
+        <strong>{quality.score}</strong>
+        <span>{quality.verdict}</span>
+      </div>
+      <div className="quality-stats">
+        <span><strong>{quality.hasGlb ? 'Yes' : 'No'}</strong><small>GLB</small></span>
+        <span><strong>{quality.loadingMetrics ? '...' : formatBytes(quality.fileBytes)}</strong><small>file</small></span>
+        <span><strong>{quality.loadingMetrics ? '...' : formatNumber(quality.triangleCount)}</strong><small>tris</small></span>
+        <span><strong>{quality.loadingMetrics ? '...' : quality.textureCount}</strong><small>textures</small></span>
+      </div>
+    </aside>
+  )
+}
+
+function DemoShowcaseOverlay({ cell, quality, referenceImageUrl, motionProfile }) {
+  return (
+    <div className="demo-showcase-overlay">
+      <div className="demo-showcase-title">
+        <span>3D Model Studio</span>
+        <strong>{cell.name}</strong>
+        <small>{quality.providerLabel} · {quality.hasGlb ? 'GLB asset' : quality.status} · {quality.verdict} · {motionProfile.label}</small>
+      </div>
+      <div className="demo-metric-strip">
+        <span><strong>{quality.score}</strong><small>score</small></span>
+        <span><strong>{formatBytes(quality.fileBytes)}</strong><small>file</small></span>
+        <span><strong>{formatNumber(quality.triangleCount)}</strong><small>triangles</small></span>
+        <span><strong>{quality.textureCount}</strong><small>textures</small></span>
+        <span><strong>{formatDuration(quality.durationMs)}</strong><small>time</small></span>
+      </div>
+      {referenceImageUrl && (
+        <div className="demo-source-thumb">
+          <img src={referenceImageUrl} alt={`${cell.name} source reference`} />
+          <span>source</span>
+        </div>
+      )}
+    </div>
   )
 }

@@ -135,6 +135,8 @@ export function createCustomCell(fileName, imageUrl, options = {}) {
   return {
     id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: name.length > 20 ? `${name.slice(0, 20)}...` : name,
+    fullName: name,
+    sourceFileName: fileName,
     type: options.type || `Uploaded 3D Model · ${base.name} fallback`,
     accent: base.accent,
     custom: true,

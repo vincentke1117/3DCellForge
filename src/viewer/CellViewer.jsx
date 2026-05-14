@@ -1,5 +1,5 @@
 import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows, Line, OrbitControls, RoundedBox, useGLTF, useTexture } from '@react-three/drei'
 import * as THREE from 'three'
 import { CELL_BODY, CELL_TYPES, ORGANELLES } from '../domain/cellData.js'
@@ -23,6 +23,227 @@ function ClickableGroup({ id, onSelect, children, ...props }) {
       {children}
     </group>
   )
+}
+
+const DEFAULT_PRESENTATION_DURATION = 7600
+const DEFAULT_CELL_CAMERA_POSITION = [0, 0.1, 6.05]
+const DEFAULT_RELIEF_CAMERA_POSITION = [0, 0.18, 5.35]
+const DEFAULT_CAMERA_TARGET = [0, 0, 0]
+const PRESENTATION_DURATION_BY_PROFILE = {
+  road: 7800,
+  aircraft: 7200,
+  vessel: 8600,
+  specimen: 8200,
+  product: 7600,
+}
+
+function smoothPingPong(elapsed, durationMs) {
+  const durationSeconds = Math.max(1, durationMs / 1000)
+  const phase = (elapsed % durationSeconds) / durationSeconds
+  return {
+    phase,
+    sweep: 0.5 - Math.cos(phase * Math.PI * 2) * 0.5,
+    wave: Math.sin(phase * Math.PI * 2),
+    lift: Math.sin(phase * Math.PI * 4),
+  }
+}
+
+function lookAt(camera, target) {
+  camera.lookAt(target[0], target[1], target[2])
+}
+
+function resetTransform(object) {
+  object.position.set(0, 0, 0)
+  object.rotation.set(0, 0, 0)
+  object.scale.setScalar(1)
+}
+
+function PresentationMotionRig({
+  enabled,
+  motionProfile = 'product',
+  targetRef,
+  defaultCameraPosition = DEFAULT_CELL_CAMERA_POSITION,
+  defaultTarget = DEFAULT_CAMERA_TARGET,
+}) {
+  const { camera } = useThree()
+
+  useEffect(() => {
+    const target = targetRef.current
+
+    if (!enabled) {
+      if (target) resetTransform(target)
+      camera.position.set(defaultCameraPosition[0], defaultCameraPosition[1], defaultCameraPosition[2])
+      lookAt(camera, defaultTarget)
+      return undefined
+    }
+
+    return () => {
+      if (target) resetTransform(target)
+      camera.position.set(defaultCameraPosition[0], defaultCameraPosition[1], defaultCameraPosition[2])
+      lookAt(camera, defaultTarget)
+    }
+  }, [camera, defaultCameraPosition, defaultTarget, enabled, targetRef])
+
+  useFrame(({ clock }) => {
+    if (!enabled || !targetRef.current) return
+
+    const { sweep, wave, lift } = smoothPingPong(clock.elapsedTime, PRESENTATION_DURATION_BY_PROFILE[motionProfile] || DEFAULT_PRESENTATION_DURATION)
+    const root = targetRef.current
+
+    if (motionProfile === 'road') {
+      root.position.set(wave * 0.08, -0.08 + wave * 0.018, -0.7 + sweep * 1.12)
+      root.rotation.set(-0.09 + lift * 0.01, -0.34 + sweep * 0.52, wave * 0.012)
+      root.scale.setScalar(0.9 + sweep * 0.18)
+      camera.position.set(2.45 - sweep * 0.72, 0.62 + wave * 0.05, 4.92 - sweep * 0.42)
+      lookAt(camera, [0, 0.02, 0.08 + sweep * 0.2])
+      return
+    }
+
+    if (motionProfile === 'aircraft') {
+      root.position.set(-0.82 + sweep * 1.64, 0.2 + wave * 0.18, -0.14 + sweep * 0.22)
+      root.rotation.set(-0.08 + wave * 0.04, -0.82 + sweep * 1.42, -wave * 0.32)
+      root.scale.setScalar(0.92 + sweep * 0.1)
+      camera.position.set(2.65 - sweep * 1.08, 1.46 + lift * 0.06, 5.04 - sweep * 0.34)
+      lookAt(camera, [root.position.x * 0.32, 0.08 + root.position.y * 0.22, -0.08])
+      return
+    }
+
+    if (motionProfile === 'vessel') {
+      root.position.set(-0.62 + sweep * 1.24, -0.05 + wave * 0.008, 0.02)
+      root.rotation.set(-0.035, -0.2 + sweep * 0.4, wave * 0.006)
+      root.scale.setScalar(1)
+      camera.position.set(4.45 - sweep * 1.42, 1.04 + lift * 0.025, 5.28)
+      lookAt(camera, [0.05, 0.04, 0])
+      return
+    }
+
+    if (motionProfile === 'specimen') {
+      root.position.set(wave * 0.05, lift * 0.018, 0.06 - sweep * 0.12)
+      root.rotation.set(-0.12 + lift * 0.035, -0.54 + sweep * 1.08, wave * 0.025)
+      root.scale.setScalar(1)
+      camera.position.set(wave * 0.42, 0.32 + lift * 0.035, 5.55 - sweep * 0.58)
+      lookAt(camera, [0, 0.08, 0])
+      return
+    }
+
+    root.position.set(wave * 0.04, lift * 0.02, 0.08 - sweep * 0.18)
+    root.rotation.set(-0.08 + lift * 0.02, -0.48 + sweep * 0.96, wave * 0.018)
+    root.scale.setScalar(1)
+    camera.position.set(0.82 + wave * 0.58, 0.56 + lift * 0.04, 5.2 - sweep * 0.44)
+    lookAt(camera, [0, 0.06, 0])
+  })
+
+  return null
+}
+
+function PresentationEnvironment({ profile }) {
+  const groupRef = useRef(null)
+  const stripeRefs = useRef([])
+  const waveRefs = useRef([])
+  const stripeOffsets = useMemo(() => Array.from({ length: 12 }, (_, index) => -5.4 + index * 0.95), [])
+  const waveOffsets = useMemo(() => Array.from({ length: 9 }, (_, index) => -3.8 + index * 0.95), [])
+
+  useFrame(({ clock }) => {
+    if (profile === 'road') {
+      stripeRefs.current.forEach((stripe, index) => {
+        if (!stripe) return
+        stripe.position.z = ((stripeOffsets[index] + clock.elapsedTime * 3.1 + 5.6) % 11.2) - 5.6
+      })
+    }
+
+    if (profile === 'vessel') {
+      waveRefs.current.forEach((wave, index) => {
+        if (!wave) return
+        wave.position.z = ((waveOffsets[index] + clock.elapsedTime * 0.62 + 4.2) % 8.4) - 4.2
+      })
+    }
+
+    if (profile === 'aircraft' && groupRef.current) {
+      groupRef.current.position.x = Math.sin(clock.elapsedTime * 0.55) * 0.34
+      groupRef.current.position.y = Math.sin(clock.elapsedTime * 0.42) * 0.06
+    }
+  })
+
+  if (profile === 'road') {
+    return (
+      <group position={[0, -1.42, 0.25]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh position={[0, 0, 0]}>
+          <planeGeometry args={[5.8, 11.2]} />
+          <meshStandardMaterial color="#d8ddd8" transparent opacity={0.28} roughness={0.82} depthWrite={false} />
+        </mesh>
+        <mesh position={[-1.42, 0.012, 0]}>
+          <planeGeometry args={[0.035, 11.2]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.36} depthWrite={false} />
+        </mesh>
+        <mesh position={[1.42, 0.012, 0]}>
+          <planeGeometry args={[0.035, 11.2]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.36} depthWrite={false} />
+        </mesh>
+        {stripeOffsets.map((z, index) => (
+          <mesh
+            key={z}
+            ref={(node) => {
+              stripeRefs.current[index] = node
+            }}
+            position={[0, 0.018, z]}
+          >
+            <planeGeometry args={[0.09, 0.54]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.76} depthWrite={false} />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
+
+  if (profile === 'aircraft') {
+    return (
+      <group ref={groupRef} position={[0, 0.45, -0.35]}>
+        {[-1.55, -0.92, -0.28, 0.36, 0.98, 1.54].map((y, index) => (
+          <Line
+            key={y}
+            points={[
+              [-3.2, y, -0.12 - index * 0.04],
+              [-0.4, y + 0.18, 0.1],
+              [3.4, y + 0.44, 0.28 + index * 0.03],
+            ]}
+            color={index % 2 ? '#ffffff' : '#7fb2cf'}
+            lineWidth={index % 2 ? 1.1 : 1.6}
+            transparent
+            opacity={index % 2 ? 0.36 : 0.26}
+          />
+        ))}
+      </group>
+    )
+  }
+
+  if (profile === 'vessel') {
+    return (
+      <group position={[0, -1.36, 0.15]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh>
+          <planeGeometry args={[6.4, 8.6]} />
+          <meshStandardMaterial color="#9dd2de" transparent opacity={0.22} roughness={0.7} depthWrite={false} />
+        </mesh>
+        {waveOffsets.map((z, index) => (
+          <mesh
+            key={z}
+            ref={(node) => {
+              waveRefs.current[index] = node
+            }}
+            position={[0, 0.016, z]}
+          >
+            <planeGeometry args={[4.8 - (index % 3) * 0.5, 0.025]} />
+            <meshBasicMaterial color={index % 2 ? '#ffffff' : '#5da6bc'} transparent opacity={index % 2 ? 0.48 : 0.3} depthWrite={false} />
+          </mesh>
+        ))}
+        <mesh position={[0, 0.022, -0.7]}>
+          <planeGeometry args={[2.8, 1.4]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.2} depthWrite={false} />
+        </mesh>
+      </group>
+    )
+  }
+
+  return null
 }
 
 function PlantChloroplast({ position, rotation = [0, 0, 0], scale = 1 }) {
@@ -826,34 +1047,45 @@ function CinematicReliefSpecimen({ imageUrl, autoRotate, onSelect }) {
   )
 }
 
-function CinematicReliefScene({ imageUrl, autoRotate, onSelectOrganelle }) {
+function CinematicReliefScene({ imageUrl, autoRotate, presentationMode, motionProfile, onSelectOrganelle }) {
+  const presentationRoot = useRef(null)
+
   return (
     <Canvas
       className="cinematic-relief-canvas"
       camera={{ position: [0, 0.18, 5.35], fov: 34 }}
       shadows
       dpr={[1, 1]}
-      gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
+      gl={{ antialias: true, alpha: presentationMode, preserveDrawingBuffer: true }}
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping
         gl.toneMappingExposure = 1.14
       }}
     >
-      <color attach="background" args={['#f6efdf']} />
+      {!presentationMode && <color attach="background" args={['#f6efdf']} />}
       <ambientLight intensity={0.84} />
       <directionalLight castShadow position={[3.6, 4.8, 5.8]} intensity={3.8} color="#fff7e8" shadow-mapSize={[1024, 1024]} />
       <directionalLight position={[-4.2, 2.1, 3.2]} intensity={1.55} color="#d6eef8" />
       <pointLight position={[0.8, -2.6, 2.6]} intensity={1.3} color="#f4a6c8" />
       <pointLight position={[-2.8, 1.2, 1.8]} intensity={0.92} color="#bde8b0" />
+      {presentationMode && <PresentationEnvironment profile={motionProfile} />}
+      <PresentationMotionRig
+        enabled={presentationMode}
+        motionProfile={motionProfile}
+        targetRef={presentationRoot}
+        defaultCameraPosition={DEFAULT_RELIEF_CAMERA_POSITION}
+      />
       <Suspense fallback={null}>
-        <CinematicReliefSpecimen imageUrl={imageUrl} autoRotate={autoRotate} onSelect={onSelectOrganelle} />
+        <group ref={presentationRoot}>
+          <CinematicReliefSpecimen imageUrl={imageUrl} autoRotate={autoRotate && !presentationMode} onSelect={onSelectOrganelle} />
+        </group>
       </Suspense>
-      <OrbitControls enablePan={false} minDistance={3.15} maxDistance={6.2} enableDamping dampingFactor={0.08} autoRotate={autoRotate} autoRotateSpeed={0.32} />
+      <OrbitControls enabled={!presentationMode} enablePan={false} minDistance={3.15} maxDistance={6.2} enableDamping dampingFactor={0.08} autoRotate={autoRotate && !presentationMode} autoRotateSpeed={0.32} />
     </Canvas>
   )
 }
 
-export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrganelle, autoRotate }) {
+export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrganelle, autoRotate, presentationMode = false, motionProfile = 'specimen' }) {
   const [pointer, setPointer] = useState({ x: 0, y: 0 })
   const [visualState, setVisualState] = useState(null)
   const visual = visualState?.imageUrl === imageUrl ? visualState.visual : null
@@ -913,10 +1145,10 @@ export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrga
     >
       {!webglAvailable && <div className="cinematic-depth-field" />}
       {webglAvailable ? (
-        <CinematicReliefScene imageUrl={imageUrl} autoRotate={autoRotate} onSelectOrganelle={onSelectOrganelle} />
+        <CinematicReliefScene imageUrl={imageUrl} autoRotate={autoRotate} presentationMode={presentationMode} motionProfile={motionProfile} onSelectOrganelle={onSelectOrganelle} />
       ) : (
         <div
-          className={`layered-png-stage ${autoRotate ? 'auto' : ''}`}
+          className={`layered-png-stage motion-${motionProfile} ${autoRotate ? 'auto' : ''}`}
           style={{ '--layer-aspect': visual?.aspect || 1 }}
           aria-label="Layered transparent PNG model visual"
         >
@@ -955,8 +1187,9 @@ export function CinematicLayerVisual({ imageUrl, selectedOrganelle, onSelectOrga
   )
 }
 
-export function CellScene({ selectedCell, modelCellId, referenceImageUrl, generatedModelUrl, selectedOrganelle, crossSection, autoRotate, hideOthers, proofMode, renderQuality, onSelectOrganelle, onExporterReady = null }) {
+export function CellScene({ selectedCell, modelCellId, referenceImageUrl, generatedModelUrl, selectedOrganelle, crossSection, autoRotate, hideOthers, proofMode, renderQuality, presentationMode = false, motionProfile = 'specimen', onSelectOrganelle, onExporterReady = null }) {
   const isPlant = modelCellId === 'plant'
+  const presentationRoot = useRef(null)
   const exportRoot = useRef(null)
   const dpr = renderQuality === 'high' ? [1, 2] : [1, 1.4]
 
@@ -974,27 +1207,31 @@ export function CellScene({ selectedCell, modelCellId, referenceImageUrl, genera
       }}
       fallback={<CellFallback selectedCell={selectedCell} modelCellId={modelCellId} referenceImageUrl={referenceImageUrl} selectedOrganelle={selectedOrganelle} onSelectOrganelle={onSelectOrganelle} />}
     >
-      <color attach="background" args={['#f5efdf']} />
+      {!presentationMode && <color attach="background" args={['#f5efdf']} />}
       <ambientLight intensity={0.82} />
       <directionalLight castShadow position={[4, 5, 5]} intensity={3.4} color="#fff7ed" shadow-mapSize={[1024, 1024]} />
       <directionalLight position={[-4.5, 2.6, 3]} intensity={1.65} color="#dbeafe" />
       <pointLight position={[0, -3.2, 2.4]} intensity={1.35} color="#f9a8d4" />
       <pointLight position={[-2.4, 1.2, 1.6]} intensity={0.75} color="#b8f7a6" />
       {proofMode && <ProofRig />}
-      <group ref={exportRoot} name={`${selectedCell}-model-export-root`}>
-        {generatedModelUrl ? (
-          <Suspense fallback={null}>
-            <GeneratedGlbModel modelUrl={apiUrl(generatedModelUrl)} proofMode={proofMode} onSelect={onSelectOrganelle} />
-          </Suspense>
-        ) : isPlant ? (
-          <PlantCellModel selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
-        ) : (
-          <CellModel cellId={modelCellId} selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
-        )}
+      {presentationMode && <PresentationEnvironment profile={motionProfile} />}
+      <PresentationMotionRig enabled={presentationMode} motionProfile={motionProfile} targetRef={presentationRoot} />
+      <group ref={presentationRoot}>
+        <group ref={exportRoot} name={`${selectedCell}-model-export-root`}>
+          {generatedModelUrl ? (
+            <Suspense fallback={null}>
+              <GeneratedGlbModel modelUrl={apiUrl(generatedModelUrl)} proofMode={proofMode} onSelect={onSelectOrganelle} />
+            </Suspense>
+          ) : isPlant ? (
+            <PlantCellModel selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+          ) : (
+            <CellModel cellId={modelCellId} selected={selectedOrganelle} crossSection={crossSection} hideOthers={hideOthers} proofMode={proofMode} onSelect={onSelectOrganelle} />
+          )}
+        </group>
       </group>
       <SceneExportBridge exportRoot={exportRoot} onExporterReady={onExporterReady} />
       <ContactShadows frames={1} position={[0, -1.32, 0]} opacity={0.2} scale={5.4} blur={2.4} far={2.8} color="#8a7355" />
-      <OrbitControls enablePan={false} minDistance={proofMode ? 4 : 3.3} maxDistance={proofMode ? 7.4 : 6.4} enableDamping dampingFactor={0.08} autoRotate={autoRotate || proofMode} autoRotateSpeed={proofMode ? 0.75 : 0.45} />
+      <OrbitControls enabled={!presentationMode} enablePan={false} minDistance={proofMode ? 4 : 3.3} maxDistance={proofMode ? 7.4 : 6.4} enableDamping dampingFactor={0.08} autoRotate={!presentationMode && (autoRotate || proofMode)} autoRotateSpeed={proofMode ? 0.75 : 0.45} />
     </Canvas>
   )
 }

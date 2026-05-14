@@ -17,7 +17,8 @@ Open the demo video: [Demo MP4](docs/demo/3DCellForge-demo-2026-05-10.mp4)
 - Interactive model viewer built with React Three Fiber.
 - Three-column workbench: Model Library on the left, WebGL stage in the center, asset/generation tools on the right.
 - Drag to rotate, scroll to zoom, isolate structure parts, inspect model details, and export the current scene.
-- Demo Mode for screenshots and screen recordings: hides side panels and keeps the model stage clean.
+- Model quality score for generated GLBs, including file size, triangle count, texture count, and demo readiness.
+- Demo Mode for screenshots and screen recordings: hides side panels, uses object-aware cinematic camera paths, and shows a clean presentation overlay.
 - Older Uploads stays collapsed by default, while the latest uploaded model stays pinned and clickable.
 - Generated/imported models are restored after refresh through IndexedDB, with localStorage as a compact fallback.
 - Part detail drawer, asset references, comparison panel, notes, gallery actions, logs, saved projects, and a compact generation queue.
@@ -57,6 +58,8 @@ The default screen is intentionally quiet:
 - Watch upload/generation/import state in the left `Generation Queue` panel.
 - Click `Info` or `Inspect` only when you need the part detail drawer.
 - Click `Demo` in the top navigation to enter a clean presentation mode for screenshots and recordings.
+- Check the quality card on the stage before recording; low scores usually mean the source image or provider result is not demo-ready.
+- Demo animation adapts to the model name and metadata: cars use a road push-in, aircraft use a flight pass, ships/carriers use a naval cruise, and biological models use a specimen orbit.
 
 Useful validation commands:
 
